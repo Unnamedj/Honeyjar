@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { one, query } from "../db.js";
+import { resolveBotUser } from "../lib/auth.js";
 import { avatarIsFresh, fetchAvatar } from "../lib/roblox.js";
 
 export const botRouter = Router();
@@ -22,15 +23,6 @@ function text(value, max = 120) {
     if (value === null || value === undefined) return null;
     const s = String(value).trim();
     return s ? s.slice(0, max) : null;
-}
-
-/** El token del bot va en Authorization: Bearer, y se acepta en el body como respaldo. */
-async function resolveUser(req) {
-    const header = req.get("authorization") ?? "";
-    const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
-    const token = bearer || text(req.body?.token, 80);
-    if (!token) return null;
-    return one("SELECT id FROM users WHERE api_token = $1", [token]);
 }
 
 /**
@@ -92,7 +84,7 @@ async function pendingCommands(accountId) {
 
 // ── hello: arranque del script ────────────────────────────────────────────────
 botRouter.post("/hello", async (req, res) => {
-    const user = await resolveUser(req);
+    const user = await resolveBotUser(req);
     if (!user) return res.status(401).json({ error: "token_invalido" });
 
     const account = await upsertAccount(user.id, req.body?.roblox);
@@ -137,7 +129,7 @@ botRouter.post("/hello", async (req, res) => {
 
 // ── beat: heartbeat periodico ─────────────────────────────────────────────────
 botRouter.post("/beat", async (req, res) => {
-    const user = await resolveUser(req);
+    const user = await resolveBotUser(req);
     if (!user) return res.status(401).json({ error: "token_invalido" });
 
     const account = await upsertAccount(user.id, req.body?.roblox);
@@ -250,7 +242,7 @@ botRouter.post("/beat", async (req, res) => {
 
 // ── bye: cierre limpio (el script se apago a proposito) ──────────────────────
 botRouter.post("/bye", async (req, res) => {
-    const user = await resolveUser(req);
+    const user = await resolveBotUser(req);
     if (!user) return res.status(401).json({ error: "token_invalido" });
 
     const clientId = text(req.body?.client, 64);

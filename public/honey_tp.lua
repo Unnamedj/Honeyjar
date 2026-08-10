@@ -56,6 +56,19 @@ local HubBaseUrl, HubToken = ...
 HubBaseUrl = tostring(HubBaseUrl or ""):gsub("/+$", "")
 HubToken   = tostring(HubToken or "")
 
+-- Puente hacia el FETCHER del panel (pool de servers frescos scrapeados con
+-- proxies rotativos). Es UNA sola tabla y no varios locals sueltos a proposito:
+-- el chunk esta al filo del limite de 200 variables locales de Lua, asi que
+-- todo lo del fetcher viaja como campos (Hop.Take, Hop.Drop, Hop.Pick, ...)
+-- que no cuentan para ese limite.
+--
+-- Se declara aca arriba porque el hop -- que vive mucho antes en el archivo --
+-- la usa, pero Take/Drop recien se asignan al final, dentro del bloque de Hub
+-- reporting, que es el unico que sabe hablar HTTP autenticado. Si el script
+-- corre standalone (sin URL/token) quedan en nil y el hop se comporta
+-- exactamente como antes: pagina games.roblox.com por su cuenta.
+local Hop = {}
+
 -- ============================================================
 -- CONFIG
 -- ============================================================
@@ -1118,6 +1131,90 @@ local function FindSmallServer()
     return GlobalBest
 end
 
+-- ------------------------------------------------------------
+-- FETCHER: el pool de servers del panel
+-- ------------------------------------------------------------
+-- Cuando el panel tiene el fetcher prendido, el listado de servers ya lo
+-- scrapeo el, en segundo plano, repartido entre proxies con IP rotativa. El
+-- bot solo pide "dame un jobId" y se lleva uno RESERVADO para el: ninguna
+-- otra cuenta recibe el mismo. Eso arregla dos cosas de una:
+--   1. el rate-limit de games.roblox.com desaparece del lado del bot (con
+--      varias cuentas paginando el listado cada 1.5s era inevitable), y
+--   2. dos cuentas dejan de saltar al mismo server, que es lo que pasaba
+--      cuando todas leian la misma primera pagina del listado.
+-- Se piden de a varios y se van consumiendo de una cola local para no pegarle
+-- al panel en cada reintento.
+-- Todo adentro de un do...end: lo unico que sale al scope del chunk son campos
+-- de Hop, que no cuentan contra el limite de 200 locales.
+do
+    local FETCH_BATCH = 5
+    local Queue = {}
+
+    -- La usa Hop.Drop para encolar el reemplazo que devuelve el panel.
+    function Hop.Push(List)
+        if type(List) ~= "table" then return end
+        for _, Id in ipairs(List) do
+            if type(Id) == "string" and Id ~= "" then
+                table.insert(Queue, Id)
+            end
+        end
+    end
+
+    local function NextFromPool()
+        if not Hop.Take then return nil end
+        local Current = tostring(game.JobId)
+
+        if #Queue == 0 then
+            Hop.Push(Hop.Take(FETCH_BATCH))
+        end
+
+        while #Queue > 0 do
+            local Id = table.remove(Queue, 1)
+            if Id ~= Current then return Id end
+        end
+        return nil
+    end
+
+    -- Devuelve (JobId, Origen). Primero el fetcher; si el panel no esta, no
+    -- tiene el fetcher prendido o el pool quedo vacio, cae al listado directo
+    -- de Roblox (el camino de siempre) para que nada dependa de que el panel
+    -- este vivo.
+    function Hop.Pick()
+        local Id = NextFromPool()
+        if Id then return Id, "fetcher" end
+
+        local Server = FindSmallServer()
+        if Server and tostring(Server.id) ~= tostring(game.JobId) then
+            return tostring(Server.id), "roblox"
+        end
+        return nil, nil
+    end
+
+    -- Un jobId del pool puede haberse llenado entre el scrape y el salto. Si el
+    -- teleport falla, se le avisa al panel para que lo saque del pool (y no se
+    -- lo pase a la proxima cuenta que pregunte) en vez de tragarse el error.
+    function Hop.Teleport(JobId, Origen)
+        local Conn
+        Conn = TeleportService.TeleportInitFailed:Connect(function(Player, Result)
+            if Player ~= LocalPlayer then return end
+            warn("[HONEY TP] Hop: teleport rechazado (" .. tostring(Result) .. ") -> " .. tostring(JobId))
+            if Origen == "fetcher" and Hop.Drop then
+                task.spawn(Hop.Drop, JobId)
+            end
+        end)
+
+        pcall(function()
+            TeleportService:TeleportToPlaceInstance(TARGET_PLACE_ID, JobId, LocalPlayer)
+        end)
+
+        -- Si el teleport prende, el script muere con el server y esto no llega
+        -- a correr; si no prende, libera la conexion para que no se apilen.
+        task.delay(8, function()
+            if Conn then Conn:Disconnect() end
+        end)
+    end
+end
+
 -- TeleportToPlaceInstance/Teleport no avisan de forma confiable si el hop en
 -- si fallo (throttle, hiccup de red, etc.) -- pcall solo atrapa un error de
 -- Lua sincronico, no un teleport que arranca y no prende. La unica señal
@@ -1135,9 +1232,9 @@ local HOP_RETRY_WAIT = 1.5
 local function HopToSmallServer()
     while Config.Enabled and Config.AutoHop and MyToken == G.__HoneyTPRun do
         SetStatus("Buscando server chico...", Color3.fromRGB(255, 110, 110))
-        local Server = FindSmallServer()
-        if Server and tostring(Server.id) ~= tostring(game.JobId) then
-            pcall(function() TeleportService:TeleportToPlaceInstance(TARGET_PLACE_ID, Server.id, LocalPlayer) end)
+        local JobId, Origen = Hop.Pick()
+        if JobId then
+            Hop.Teleport(JobId, Origen)
         end
         task.wait(HOP_RETRY_WAIT)
     end
@@ -1778,12 +1875,21 @@ SmartBtn.Activated:Connect(function() SmartOverlay.Visible = true end)
 SmartCloseBtn.Activated:Connect(function() SmartOverlay.Visible = false end)
 SmartOverlay.Activated:Connect(function() SmartOverlay.Visible = false end)
 
--- TP Speed
-local SPEED_LABEL_Y = 236
-local SPEED_TRACK_Y = 254
+-- Coordenadas de las filas del panel, juntas en una tabla y no como locals
+-- sueltos: el chunk esta al filo del limite de 200 variables locales de Lua
+-- (ver el comentario de `Hop` arriba), y los campos de una tabla no cuentan.
+local Layout = {
+    speedLabel = 236,
+    speedTrack = 254,
+    hopRow     = 280,
+    chips      = 346,
+    status     = 386,
+    chipW      = (BASE_WIDTH - 32 - 10) / 2,
+}
 
+-- TP Speed
 local SpeedLabel = Instance.new("TextLabel")
-SpeedLabel.Position = UDim2.fromOffset(16, SPEED_LABEL_Y)
+SpeedLabel.Position = UDim2.fromOffset(16, Layout.speedLabel)
 SpeedLabel.Size = UDim2.new(0.6, -16, 0, 14)
 SpeedLabel.BackgroundTransparency = 1
 SpeedLabel.Text = "TP SPEED"
@@ -1795,7 +1901,7 @@ SpeedLabel.Parent = Main
 
 local SpeedValue = Instance.new("TextLabel")
 SpeedValue.AnchorPoint = Vector2.new(1, 0)
-SpeedValue.Position = UDim2.new(1, -16, 0, SPEED_LABEL_Y)
+SpeedValue.Position = UDim2.new(1, -16, 0, Layout.speedLabel)
 SpeedValue.Size = UDim2.fromOffset(90, 14)
 SpeedValue.BackgroundTransparency = 1
 SpeedValue.TextXAlignment = Enum.TextXAlignment.Right
@@ -1805,7 +1911,7 @@ SpeedValue.TextSize = 10
 SpeedValue.Parent = Main
 
 local SpeedTrack = Instance.new("Frame")
-SpeedTrack.Position = UDim2.fromOffset(16, SPEED_TRACK_Y)
+SpeedTrack.Position = UDim2.fromOffset(16, Layout.speedTrack)
 SpeedTrack.Size = UDim2.new(1, -32, 0, 10)
 SpeedTrack.BackgroundColor3 = COLORS.button
 SpeedTrack.BorderSizePixel = 0
@@ -1872,8 +1978,7 @@ SpeedKnob.InputBegan:Connect(function(Input)
 end)
 
 -- Auto Hop After Collect
-local HOP_ROW_Y = 280
-local HopTrack, HopKnob, HopHit = MakeSwitchRow(Main, HOP_ROW_Y, 56, "Auto Hop After Collect",
+local HopTrack, HopKnob, HopHit = MakeSwitchRow(Main, Layout.hopRow, 56, "Auto Hop After Collect",
     "Hops to a low-pop server once this one's empty")
 
 local function PaintHop()
@@ -1893,13 +1998,10 @@ HopHit.Activated:Connect(function()
 end)
 
 -- Chips: Health Lock / Show Path
-local CHIPS_Y = 346
-local CHIP_W = (BASE_WIDTH - 32 - 10) / 2
-
 local function MakeChip(X, Label)
     local Chip = Instance.new("TextButton")
-    Chip.Position = UDim2.fromOffset(X, CHIPS_Y)
-    Chip.Size = UDim2.fromOffset(CHIP_W, 30)
+    Chip.Position = UDim2.fromOffset(X, Layout.chips)
+    Chip.Size = UDim2.fromOffset(Layout.chipW, 30)
     Chip.BackgroundColor3 = COLORS.card
     Chip.BorderSizePixel = 0
     Chip.AutoButtonColor = false
@@ -1932,7 +2034,7 @@ local function MakeChip(X, Label)
 end
 
 local HealthChip, HealthDot, HealthLbl = MakeChip(16, "Health Lock")
-local PathChip, PathDot, PathLbl = MakeChip(16 + CHIP_W + 10, "Show Path")
+local PathChip, PathDot, PathLbl = MakeChip(16 + Layout.chipW + 10, "Show Path")
 
 local function PaintHealth()
     local On = Config.HealthLock
@@ -1959,11 +2061,9 @@ PathChip.Activated:Connect(function()
 end)
 
 -- Status + collected counter
-local STATUS_Y = 386
-
 local StatusDot = Instance.new("Frame")
 StatusDot.AnchorPoint = Vector2.new(0, 0.5)
-StatusDot.Position = UDim2.fromOffset(16, STATUS_Y + 8)
+StatusDot.Position = UDim2.fromOffset(16, Layout.status + 8)
 StatusDot.Size = UDim2.fromOffset(7, 7)
 StatusDot.BackgroundColor3 = COLORS.muted
 StatusDot.BorderSizePixel = 0
@@ -1971,7 +2071,7 @@ StatusDot.Parent = Main
 Corner(StatusDot, 4)
 
 local Status = Instance.new("TextLabel")
-Status.Position = UDim2.fromOffset(28, STATUS_Y)
+Status.Position = UDim2.fromOffset(28, Layout.status)
 Status.Size = UDim2.new(1, -100, 0, 16)
 Status.BackgroundTransparency = 1
 Status.Text = "Idle"
@@ -1984,7 +2084,7 @@ Status.Parent = Main
 
 local CollectedLabel = Instance.new("TextLabel")
 CollectedLabel.AnchorPoint = Vector2.new(1, 0)
-CollectedLabel.Position = UDim2.new(1, -16, 0, STATUS_Y)
+CollectedLabel.Position = UDim2.new(1, -16, 0, Layout.status)
 CollectedLabel.Size = UDim2.fromOffset(60, 16)
 CollectedLabel.BackgroundTransparency = 1
 CollectedLabel.Text = "🍯 0"
@@ -2238,8 +2338,8 @@ print(("[HONEY TP] method: %s | speed: %d | autohop: %s | smart: %s"):format(
 -- se mantiene separado a proposito.
 -- ============================================================
 if HubBaseUrl ~= "" and HubToken ~= "" then
-    -- Cada ejecutor expone el POST con otro nombre. Se resuelve una vez.
-    local HubHttpPost
+    -- Cada ejecutor expone el request con otro nombre. Se resuelve una vez.
+    local HubHttpJson, HubHttpPost
     do
         local impl = (syn and syn.request)
             or (http and http.request)
@@ -2248,16 +2348,22 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
             or (fluxus and fluxus.request)
 
         if type(impl) == "function" then
-            function HubHttpPost(Path, Body)
-                local ok, res = pcall(impl, {
+            function HubHttpJson(Method, Path, Body)
+                local Options = {
                     Url = HubBaseUrl .. Path,
-                    Method = "POST",
+                    Method = Method,
                     Headers = {
                         ["Content-Type"]  = "application/json",
                         ["Authorization"] = "Bearer " .. HubToken,
                     },
-                    Body = HttpService:JSONEncode(Body),
-                })
+                }
+                -- Un GET con Body vacio hace renegar a varios ejecutores, asi
+                -- que el campo directamente no va cuando no hay cuerpo.
+                if Body ~= nil then
+                    Options.Body = HttpService:JSONEncode(Body)
+                end
+
+                local ok, res = pcall(impl, Options)
                 if not ok or type(res) ~= "table" then return nil end
                 if (res.StatusCode or res.status_code or 0) >= 400 then return nil end
 
@@ -2266,6 +2372,10 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                     decoded = HttpService:JSONDecode(res.Body or res.body or "{}")
                 end)
                 return decoded
+            end
+
+            function HubHttpPost(Path, Body)
+                return HubHttpJson("POST", Path, Body)
             end
         end
     end
@@ -2320,6 +2430,29 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
         end
 
         local HubClientId = HttpService:GenerateGUID(false)
+
+        -- Enganche del FETCHER (los slots declarados arriba de todo). A partir
+        -- de aca el hop pide jobIds al panel en vez de paginar Roblox por su
+        -- cuenta. Si el panel no tiene el fetcher prendido, /api/fetch/server
+        -- contesta 503, HubHttpJson devuelve nil, y Hop.Pick cae solo al
+        -- camino de siempre -- no hay nada que configurar en el script.
+        Hop.Take = function(Count)
+            local Res = HubHttpJson(
+                "GET",
+                ("/api/fetch/server?size=%d&max=%d"):format(Count, HOP_MAX_PLAYERS)
+            )
+            if type(Res) == "table" and type(Res.jobIds) == "table" then
+                return Res.jobIds
+            end
+            return nil
+        end
+
+        Hop.Drop = function(JobId)
+            -- La respuesta trae un reemplazo listo; se encola para que el
+            -- proximo intento no tenga que pedir de nuevo.
+            local Res = HubHttpJson("POST", "/api/fetch/drop", { jobId = JobId })
+            if type(Res) == "table" then Hop.Push(Res.jobIds) end
+        end
 
         local function HubSnapshot()
             return {
@@ -2388,11 +2521,9 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 task.spawn(function()
                     SetStatus("Hop manual desde el panel...", COLORS.bad)
                     for _ = 1, 4 do
-                        local Server = FindSmallServer()
-                        if Server and tostring(Server.id) ~= tostring(game.JobId) then
-                            pcall(function()
-                                TeleportService:TeleportToPlaceInstance(TARGET_PLACE_ID, Server.id, LocalPlayer)
-                            end)
+                        local JobId, Origen = Hop.Pick()
+                        if JobId then
+                            Hop.Teleport(JobId, Origen)
                             break
                         end
                         task.wait(1.5)

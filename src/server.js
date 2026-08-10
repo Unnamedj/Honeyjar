@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import cookieParser from "cookie-parser";
 import express from "express";
 import { migrate, pool } from "./db.js";
+import { startFetcher, stopFetcher } from "./fetcher/pool.js";
 import { authRouter } from "./routes/auth.js";
 import { botRouter } from "./routes/bot.js";
 import { dashRouter } from "./routes/dash.js";
+import { fetchRouter } from "./routes/fetch.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -20,6 +22,10 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/bot", botRouter);
+// Antes que dashRouter: dashRouter esta montado en /api y exige cookie de
+// sesion para TODO lo que le entra, y el fetcher se autentica con el api_token
+// del script, no con la cookie del panel.
+app.use("/api/fetch", fetchRouter);
 app.use("/api", dashRouter);
 
 app.use(
@@ -50,8 +56,13 @@ const server = app.listen(PORT, () => {
     console.log(`[honey-hub] escuchando en :${PORT}`);
 });
 
+// El scraper arranca despues del listen: si Railway tarda en resolver los
+// proxies, el healthcheck ya contesta igual.
+startFetcher();
+
 for (const signal of ["SIGTERM", "SIGINT"]) {
     process.on(signal, () => {
+        stopFetcher();
         server.close(() => pool.end().then(() => process.exit(0)));
     });
 }

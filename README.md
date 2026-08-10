@@ -54,6 +54,8 @@ que no hay paso de migración manual.
 | `PORT` | no | La define Railway; en local, 3000 |
 | `BEAT_INTERVAL_MS` | no | Cada cuánto reporta el bot. Default 5000 |
 | `ALLOW_SIGNUP` | no | `0` cierra el registro de usuarios nuevos |
+| `PROXIES` | no | Proxies para el fetcher. Sin esto el fetcher queda apagado (ver abajo) |
+| `FETCHER` | no | `1` prende el fetcher sin proxies, `0` lo apaga siempre |
 
 ### Correrlo local
 
@@ -120,6 +122,34 @@ los aplicó. Mientras tanto la tarjeta muestra *orden pendiente*. Un comando del
 mismo tipo sin entregar queda obsoleto apenas llega otro: si tocaste velocidad
 tres veces seguidas, al bot le llega la última.
 
+### El fetcher (servers frescos para el hop)
+
+Sin fetcher, cada cuenta pagina `games.roblox.com` por su cuenta cada vez que
+quiere saltar. Con varias cuentas eso son decenas de requests por minuto desde
+la misma IP: llega el 429, el listado empieza a devolver nada, y el síntoma es
+*"ni hace hop"*. Peor: todas leen la misma primera página, así que terminan
+saltando **al mismo server**.
+
+Con el fetcher, el panel scrapea el listado una sola vez, en segundo plano y
+repartido entre proxies, y guarda los jobIds en un pool. El bot pide uno y se
+lleva uno **reservado para él**: nadie más lo recibe hasta que vence la reserva.
+Cero rate-limit del lado del bot, y dos cuentas nunca aterrizan juntas.
+
+Cómo se prende: pegá tus proxies en `PROXIES` y listo — no hay nada que tocar en
+el script. Con proxies residenciales tipo Nettify, el id de sesión va dentro del
+usuario (`…-session-aub815-time-1`) y es lo que fija la IP de salida; el fetcher
+lo **rota en cada request**, así que con un solo proxy ya tenés una IP distinta
+por request. No hace falta pegar una lista larga.
+
+El script degrada solo, en los dos sentidos: si el panel no está, no tiene el
+fetcher prendido o el pool quedó vacío, `/api/fetch/server` contesta 503 y el
+hop cae al listado directo de Roblox, exactamente como antes. Y si un jobId ya
+se llenó entre el scrape y el salto, el teleport falla, el bot avisa por
+`/api/fetch/drop` y ese server sale del pool en vez de repartirse a la siguiente
+cuenta.
+
+Para mirar cómo va: `GET /api/fetch/stats` con el token del bot.
+
 ---
 
 ## API
@@ -131,6 +161,9 @@ tres veces seguidas, al bot le llega la última.
 | POST | `/api/bot/hello` | Registra la corrida, cierra las sesiones viejas |
 | POST | `/api/bot/beat` | Heartbeat: manda estado, recibe comandos |
 | POST | `/api/bot/bye` | Cierre limpio (al salir o teleportar) |
+| GET | `/api/fetch/server?size=<n>&max=<jugadores>` | Pide jobIds del pool. `503 pool_vacio` si no hay |
+| POST | `/api/fetch/drop` | `{jobId}` — ese server no sirve; lo saca del pool y devuelve reemplazo |
+| GET | `/api/fetch/stats` | Estado del pool y de los proxies |
 
 ### Dashboard (cookie de sesión)
 
@@ -172,6 +205,10 @@ src/
   routes/auth.js     registro, login, token
   routes/bot.js      ingesta de telemetría y entrega de comandos
   routes/dash.js     el overview que consume el panel
+  routes/fetch.js    API del fetcher: dispensa jobIds, acepta descartes
+  fetcher/pool.js    el pool de servers: scrapers, reserva, reciclado
+  fetcher/proxies.js parseo de proxies y rotación del id de sesión
+  fetcher/http.js    GET con JSON a través del túnel del proxy
 public/
   index.html         login y registro
   panel.html         el dashboard

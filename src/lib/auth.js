@@ -28,6 +28,21 @@ export function newApiToken() {
     return "hh_" + crypto.randomBytes(24).toString("hex");
 }
 
+/**
+ * Resuelve al usuario a partir del api_token que pega el script. Lo comparten
+ * las rutas del bot (/api/bot/*) y las del fetcher (/api/fetch/*): es la misma
+ * credencial, y el GET del fetcher tambien acepta ?token= porque no todos los
+ * ejecutores dejan mandar headers en un GET.
+ */
+export async function resolveBotUser(req) {
+    const header = req.get("authorization") ?? "";
+    const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+    const raw = bearer || req.body?.token || req.query?.token;
+    const token = typeof raw === "string" ? raw.trim().slice(0, 80) : "";
+    if (!token) return null;
+    return one("SELECT id FROM users WHERE api_token = $1", [token]);
+}
+
 export function issueSession(res, user) {
     const token = jwt.sign({ uid: user.id }, SECRET, { expiresIn: "30d" });
     res.cookie(COOKIE, token, {
