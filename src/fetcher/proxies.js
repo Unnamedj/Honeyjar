@@ -101,8 +101,24 @@ export function parseProxy(raw) {
     return null;
 }
 
+/**
+ * Si PROXY_ROTATE_SESSION=0, nunca se inventa un session-id nuevo: la linea
+ * se usa tal cual llego. Tiene sentido apagarlo cuando cada linea YA es una
+ * sesion distinta y real (por ejemplo, varios miles de lineas compradas o
+ * generadas en el panel del proveedor) -- ahi no hace falta rotar nada
+ * nosotros, y si el proveedor exige que el session-id sea uno de los que ya
+ * asigno, pisarlo con uno inventado puede terminar cayendo a una IP por
+ * defecto en vez de fallar limpio, que es dificil de distinguir de un
+ * rate-limit real. Por defecto queda prendido: es lo que conviene cuando hay
+ * pocas lineas (o una sola) y se necesitan muchas IPs distintas de ahi.
+ */
+function rotationEnabled() {
+    const v = String(process.env.PROXY_ROTATE_SESSION ?? "1").trim().toLowerCase();
+    return v !== "0" && v !== "false" && v !== "off";
+}
+
 /** URL http:// lista para HttpsProxyAgent, con el session id ya rotado si toca. */
-export function proxyUrl(proxy, { rotate = true } = {}) {
+export function proxyUrl(proxy, { rotate = rotationEnabled() } = {}) {
     const user = rotate ? rotateSession(proxy.username) : proxy.username;
     const auth = user
         ? `${encodeURIComponent(user)}:${encodeURIComponent(proxy.password ?? "")}@`
