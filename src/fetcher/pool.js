@@ -27,11 +27,6 @@ const PLACE_ID = envInt("FETCH_PLACE_ID", 109983668079237, { min: 1 });
 // Umbral por defecto de "server chico". El bot puede pedir otro por query.
 const MAX_PLAYERS = envInt("FETCH_MAX_PLAYERS", 2, { min: 0, max: 100 });
 
-// Cuantos loops de scraping corren en paralelo. Con proxies rotativos cada loop
-// sale por una IP distinta, asi que subirlo escala casi lineal; sin proxies,
-// mas workers solo aceleran el 429.
-const WORKERS = envInt("FETCH_WORKERS", proxyCountAtBoot() ? 6 : 2, { min: 1, max: 32 });
-
 const MAX_PAGES = envInt("FETCH_MAX_PAGES", 10, { min: 1, max: 50 });
 const MAX_SERVERS = envInt("FETCH_MAX_SERVERS", 20_000, { min: 100 });
 
@@ -46,8 +41,16 @@ const STALE_MS = envInt("FETCH_STALE_MS", 8 * 60_000, { min: 30_000 });
 const MIN_DELAY = envInt("FETCH_MIN_DELAY_MS", 120, { min: 0 });
 const MAX_DELAY = envInt("FETCH_MAX_DELAY_MS", 10_000, { min: 1_000 });
 
-function proxyCountAtBoot() {
-    return String(process.env.PROXIES ?? "").trim() || process.env.PROXY_FILE ? 1 : 0;
+// Cuantos loops de scraping corren en paralelo. Se calcula DESPUES de parsear
+// los proxies (no solo mirar si PROXIES esta seteada) porque el numero
+// correcto depende de cuantos hay: con un solo proxy, 6 workers concurrentes
+// abren 6 tuneles CONNECT al mismo gateway al mismo tiempo, lo cual empieza a
+// generar errores de conexion (visto en produccion: 12 errores, el proxy
+// terminaba penalizado seguido). Con mas proxies, mas paralelismo tiene
+// sentido -- cada uno rota su propia IP.
+function defaultWorkers(proxyN) {
+    if (!proxyN) return 2; // sin proxies no hay nada que paralelizar de mas
+    return Math.min(8, Math.max(2, proxyN * 3));
 }
 
 // ── Estado ────────────────────────────────────────────────────────────────────
@@ -62,6 +65,7 @@ const dropped = new Map(); // jobId -> timestamp
 const stats = {
     startedAt: Date.now(),
     running: false,
+    workers: 0,
     scraped: 0,
     dispensed: 0,
     drops: 0,
@@ -157,6 +161,20 @@ async function scrapeLoop(workerId) {
             await sleep(stats.delayMs);
 
             const proxy = nextProxy();
+
+            // Hay proxies configurados pero TODOS estan en penalizacion ahora
+            // mismo: nextProxy() devuelve null igual que cuando no hay proxies,
+            // pero acomodar eso como "pedido directo" es lo que causaba el loop
+            // visto en produccion -- el unico proxy se penaliza, los workers
+            // caen todos juntos a la IP de Railway, Roblox les tira 429 en
+            // rafaga, delayMs se va al techo y no hay forma de que se recupere
+            // porque el siguiente intento vuelve a caer directo. Mejor esperar
+            // a que salga de penalizacion en vez de pedirle nada a Roblox.
+            if (!proxy && proxyCount() > 0) {
+                await sleep(2_000);
+                break;
+            }
+
             const res = await getJson(url, { proxy, timeoutMs: proxy ? 15_000 : 8_000 });
 
             if (!res.ok) {
@@ -273,7 +291,7 @@ export function poolStats() {
         proxies: proxyCount(),
         proxiesRotativos: rotatingCount(),
         proxiesPenalizados: penalizedCount(),
-        workers: stats.running ? WORKERS : 0,
+        workers: stats.running ? stats.workers : 0,
         delayMs: stats.delayMs,
         delayBaseMs: MIN_DELAY,
         scrapeados: stats.scraped,
@@ -343,9 +361,11 @@ export function startFetcher() {
         return false;
     }
 
+    const workers = envInt("FETCH_WORKERS", defaultWorkers(proxies), { min: 1, max: 32 });
+    stats.workers = workers;
     stats.running = true;
     stats.startedAt = Date.now();
-    for (let i = 0; i < WORKERS; i += 1) {
+    for (let i = 0; i < workers; i += 1) {
         setTimeout(() => {
             scrapeLoop(i).catch((err) => {
                 recordError(err.message);
@@ -357,7 +377,7 @@ export function startFetcher() {
     cleanupTimer.unref?.();
 
     console.log(
-        `[fetcher] ${WORKERS} workers scrapeando el place ${PLACE_ID} ` +
+        `[fetcher] ${workers} workers scrapeando el place ${PLACE_ID} ` +
         `(${proxies} proxies, umbral <=${MAX_PLAYERS} jugadores)`
     );
     return true;

@@ -212,8 +212,9 @@ function fetcherNote(f) {
             "usuario da una IP distinta por request.";
     }
     if (f.proxiesPenalizados >= f.proxies && f.proxies > 0) {
-        return "Todos tus proxies están fuera de rotación por fallar. El scraper sigue saliendo " +
-            "directo mientras tanto.";
+        return "Todos tus proxies están fuera de rotación por fallar (revisá host, puerto y " +
+            "credenciales). El scraper NO cae a pedir directo mientras tanto — eso quemaría la IP " +
+            "del panel — así que el pool no crece hasta que alguno se recupere.";
     }
     if (f.ultimoError) return `Último error: ${f.ultimoError}`;
     return null;
