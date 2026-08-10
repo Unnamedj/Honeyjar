@@ -1054,8 +1054,14 @@ local HOP_MAX_PLAYERS = 2
 -- en un juego con muchos servers activos ni comerse un rate-limit de Roblox.
 local HOP_MAX_PAGES = 20
 
+-- El listado de servers pide el UNIVERSE id (game.GameId), no el place id --
+-- TARGET_PLACE_ID sirve para TeleportToPlaceInstance, pero pasado aca como
+-- si fuera universe id devuelve servers de otro juego (o ninguno), y el
+-- teleport termina fallando con "Can't join private instance through
+-- specific joins" porque el Server.id no pertenece al place al que se
+-- intenta entrar.
 local function GetServerPage(Cursor)
-    local Url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(TARGET_PLACE_ID)
+    local Url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.GameId)
     if Cursor and Cursor ~= "" then
         Url = Url .. "&cursor=" .. Cursor
     end
