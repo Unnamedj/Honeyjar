@@ -1,6 +1,6 @@
 import { areaChart, rampColor, sparkline } from "/js/charts.js";
 
-const POLL_MS = 4000;
+const POLL_MS = 2000;
 
 const state = {
     data: null,
@@ -286,7 +286,7 @@ function accountCard(a) {
             }</span></div>
             <div class="meta__row"><span class="meta__key">Método</span><span class="meta__val">${
                 escapeHtml(a.method || "—")
-            }${a.smartTp ? " 🧠" : ""}</span></div>
+            }${a.smartTp ? " (Smart)" : ""}</span></div>
             <div class="meta__row"><span class="meta__key">Velocidad</span><span class="meta__val num">${
                 a.speed ? `${a.speed}` : "—"
             }</span></div>
@@ -295,28 +295,30 @@ function accountCard(a) {
         <div class="controls">
             ${
                 a.pendingCommands
-                    ? `<span class="controls__pending">⏳ ${a.pendingCommands} ${
+                    ? `<span class="controls__pending">${a.pendingCommands} ${
                           a.pendingCommands === 1 ? "orden pendiente" : "órdenes pendientes"
                       } — se aplica en el próximo beat</span>`
                     : ""
             }
             <button class="btn btn--sm ${a.enabled ? "btn--on" : ""}" data-cmd="enabled"
                     data-value="${a.enabled ? "off" : "on"}">
-                ${a.enabled ? "⏸ Pausar" : "▶ Recolectar"}
+                ${a.enabled ? "Pausar" : "Recolectar"}
             </button>
             <button class="btn btn--sm ${a.method === "Grapple" ? "btn--on" : ""}"
                     data-cmd="method" data-value="Grapple"
-                    title="Método: Grapple" aria-label="Usar método Grapple">🪝</button>
+                    title="Método: Grapple" aria-label="Usar método Grapple">Grapple</button>
             <button class="btn btn--sm ${a.method === "Carpet" ? "btn--on" : ""}"
                     data-cmd="method" data-value="Carpet"
-                    title="Método: Carpet" aria-label="Usar método Carpet">🧺</button>
+                    title="Método: Carpet" aria-label="Usar método Carpet">Carpet</button>
+            <button class="btn btn--sm ${a.smartTp ? "btn--on" : ""}" data-cmd="smart"
+                    data-value="${a.smartTp ? "off" : "on"}" title="Smart TP">Smart TP</button>
             <button class="btn btn--sm ${a.autoHop ? "btn--on" : ""}" data-cmd="autohop"
-                    data-value="${a.autoHop ? "off" : "on"}" title="Auto Hop">↷ Hop auto</button>
-            <button class="btn btn--sm" data-cmd="hop" title="Saltar de server ahora">⇥ Hop ya</button>
+                    data-value="${a.autoHop ? "off" : "on"}" title="Auto Hop">Hop auto</button>
+            <button class="btn btn--sm" data-cmd="hop" title="Saltar de server ahora">Hop ya</button>
             <button class="btn btn--sm ${selected ? "btn--on" : "btn--ghost"}" data-focus>
-                ${selected ? "★ En el gráfico" : "📈 Ver curva"}
+                ${selected ? "En el gráfico" : "Ver curva"}
             </button>
-            <button class="btn btn--sm btn--danger" data-remove title="Quitar del panel">🗑</button>
+            <button class="btn btn--sm btn--danger" data-remove title="Quitar del panel">Quitar</button>
         </div>
     </article>`;
 }
