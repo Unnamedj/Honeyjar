@@ -67,10 +67,9 @@ local Config = {
     AutoHop = false,
     SmartTP = false,
     Enabled = false,
-    -- Umbrales de Smart TP (ver SmartPickMethod mas abajo): configurables,
-    -- se guardan y se leen igual que el resto de Config.
-    SmartGrappleRange  = 700,  -- alcance real del gancho cuando esta listo
-    SmartFallbackSpeed = 250,  -- velocidad de Carpet cuando el gancho no esta disponible
+    -- Velocidad de Carpet cuando Smart TP cae a Carpet (gancho en cooldown):
+    -- configurable, se guarda y se lee igual que el resto de Config.
+    SmartFallbackSpeed = 250,
 }
 
 if readfile and isfile and isfile(CONFIG_FILE) then
@@ -88,8 +87,6 @@ if readfile and isfile and isfile(CONFIG_FILE) then
             if type(Data.AutoHop) == "boolean" then Config.AutoHop = Data.AutoHop end
             if type(Data.SmartTP) == "boolean" then Config.SmartTP = Data.SmartTP end
             if type(Data.Enabled) == "boolean" then Config.Enabled = Data.Enabled end
-            local GrappleRange = tonumber(Data.SmartGrappleRange)
-            if GrappleRange then Config.SmartGrappleRange = math.clamp(GrappleRange, 100, 2000) end
             local FallbackSpeed = tonumber(Data.SmartFallbackSpeed)
             if FallbackSpeed then Config.SmartFallbackSpeed = math.clamp(FallbackSpeed, 50, 1000) end
         end
@@ -107,7 +104,6 @@ local function SaveConfig()
             AutoHop = Config.AutoHop,
             SmartTP = Config.SmartTP,
             Enabled = Config.Enabled,
-            SmartGrappleRange = Config.SmartGrappleRange,
             SmartFallbackSpeed = Config.SmartFallbackSpeed,
         }))
     end)
@@ -860,14 +856,17 @@ local function RouteLength(FromPos, Route)
     return Total
 end
 
--- Smart TP: el gancho tiene ~3s de cooldown propio del juego. Prendido, cada
--- TP prefiere Grapple siempre que sea posible (listo y dentro de su alcance
--- real, Config.SmartGrappleRange) sin importar que tan cerca este el
--- objetivo. Solo cae a Carpet cuando el gancho esta en cooldown o el
--- objetivo esta mas lejos de lo que alcanza, y ahi usa Config.SmartFallbackSpeed
--- porque la carpet sola no es confiable a full velocidad en tramos largos.
-local function SmartPickMethod(Distance)
-    if Distance <= Config.SmartGrappleRange and GrappleReady() then
+-- Smart TP: el modo Grapple fijo dispara el gancho en CADA intento sin mirar
+-- la distancia -- si el timing no da (todavia en cooldown real del juego),
+-- simplemente lo vuelve a intentar en el proximo TP. Smart imita exactamente
+-- eso: usa Grapple siempre que nuestro tracker de cooldown lo de listo, sin
+-- techo de distancia (antes Config.SmartGrappleRange cortaba a Carpet en
+-- tramos largos aunque el gancho estuviera disponible, que es lo que hacia
+-- que "no lo usara"). Solo cae a Carpet cuando el gancho esta en cooldown, y
+-- ahi a Config.SmartFallbackSpeed porque la carpet sola no es confiable a
+-- full velocidad en tramos largos.
+local function SmartPickMethod()
+    if GrappleReady() then
         return "Grapple", nil
     end
     return "Carpet", Config.SmartFallbackSpeed
@@ -883,7 +882,7 @@ local function MoveToPosition(Target)
     local Method = Config.Method
     local SmartSpeedOverride = nil
     if Config.SmartTP then
-        Method, SmartSpeedOverride = SmartPickMethod((Target - HRP.Position).Magnitude)
+        Method, SmartSpeedOverride = SmartPickMethod()
     end
 
     -- El tiron del gancho y el vuelo rapido pueden matarte a mitad de camino, y
@@ -1615,8 +1614,8 @@ local SmartTrack, SmartKnob, SmartHit = MakeSwitchRow(SmartPopup, 84, 40, "Smart
 -- Se arma en funcion, no en constante, porque los umbrales viven en Config y
 -- pueden cambiar en caliente (desde el panel): PaintSmart lo vuelve a pedir.
 local function SmartCaptionText()
-    return ("Gancho: hasta %d studs si esta listo (cooldown %ds) · Carpet a %d si no hay gancho disponible"):format(
-        Config.SmartGrappleRange, GRAPPLE_COOLDOWN, Config.SmartFallbackSpeed)
+    return ("Gancho: siempre que este listo (cooldown %ds), sin importar la distancia · Carpet a %d si no hay gancho disponible"):format(
+        GRAPPLE_COOLDOWN, Config.SmartFallbackSpeed)
 end
 
 local SmartCaption = Instance.new("TextLabel")
