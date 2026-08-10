@@ -1561,7 +1561,7 @@ SmartOverlay.Parent = ScreenGui
 local SmartPopup = Instance.new("Frame")
 SmartPopup.AnchorPoint = Vector2.new(0.5, 0.5)
 SmartPopup.Position = UDim2.fromScale(0.5, 0.5)
-SmartPopup.Size = UDim2.fromOffset(240, 194)
+SmartPopup.Size = UDim2.fromOffset(240, 236)
 SmartPopup.BackgroundColor3 = COLORS.bg
 SmartPopup.BorderSizePixel = 0
 SmartPopup.Active = true -- absorbe el click para que no cierre el popup por error
@@ -1619,7 +1619,7 @@ local function SmartCaptionText()
 end
 
 local SmartCaption = Instance.new("TextLabel")
-SmartCaption.Position = UDim2.fromOffset(16, 134)
+SmartCaption.Position = UDim2.fromOffset(16, 176)
 SmartCaption.Size = UDim2.new(1, -32, 0, 44)
 SmartCaption.BackgroundTransparency = 1
 SmartCaption.Text = SmartCaptionText()
@@ -1652,6 +1652,105 @@ SmartHit.Activated:Connect(function()
     SaveConfig()
     PaintSmart()
 end)
+
+-- Velocidad de Carpet cuando el gancho esta en cooldown -- configurable con
+-- su propio slider, igual que TP Speed, en vez de un valor fijo que solo se
+-- podia tocar editando honey_tp.json a mano. Va en un do..end para no sumar
+-- locales permanentes de mas: el chunk principal tiene un tope duro de 200
+-- variables locales activas, y este script ya anda cerca del limite.
+local SmartSpeedDragging = false
+local SyncSmartSpeedDisplay, SetSmartSpeedFromX
+
+do
+    local SmartSpeedLabel = Instance.new("TextLabel")
+    SmartSpeedLabel.Position = UDim2.fromOffset(16, 134)
+    SmartSpeedLabel.Size = UDim2.new(0.6, -16, 0, 14)
+    SmartSpeedLabel.BackgroundTransparency = 1
+    SmartSpeedLabel.Text = "CARPET FALLBACK SPEED"
+    SmartSpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SmartSpeedLabel.TextColor3 = COLORS.muted
+    SmartSpeedLabel.Font = Enum.Font.GothamBold
+    SmartSpeedLabel.TextSize = 10
+    SmartSpeedLabel.Parent = SmartPopup
+
+    local SmartSpeedValue = Instance.new("TextLabel")
+    SmartSpeedValue.AnchorPoint = Vector2.new(1, 0)
+    SmartSpeedValue.Position = UDim2.new(1, -16, 0, 134)
+    SmartSpeedValue.Size = UDim2.fromOffset(90, 14)
+    SmartSpeedValue.BackgroundTransparency = 1
+    SmartSpeedValue.TextXAlignment = Enum.TextXAlignment.Right
+    SmartSpeedValue.TextColor3 = COLORS.accent2
+    SmartSpeedValue.Font = Enum.Font.GothamBold
+    SmartSpeedValue.TextSize = 10
+    SmartSpeedValue.Parent = SmartPopup
+
+    local SmartSpeedTrack = Instance.new("Frame")
+    SmartSpeedTrack.Position = UDim2.fromOffset(16, 152)
+    SmartSpeedTrack.Size = UDim2.new(1, -32, 0, 10)
+    SmartSpeedTrack.BackgroundColor3 = COLORS.button
+    SmartSpeedTrack.BorderSizePixel = 0
+    SmartSpeedTrack.Active = true
+    SmartSpeedTrack.Parent = SmartPopup
+    Corner(SmartSpeedTrack, 99)
+
+    local SmartSpeedFill = Instance.new("Frame")
+    SmartSpeedFill.Size = UDim2.new(0, 0, 1, 0)
+    SmartSpeedFill.BackgroundColor3 = COLORS.accent
+    SmartSpeedFill.BorderSizePixel = 0
+    SmartSpeedFill.Parent = SmartSpeedTrack
+    Corner(SmartSpeedFill, 99)
+    Gradient(SmartSpeedFill, COLORS.accent, COLORS.accent2, 0)
+
+    local SmartSpeedKnob = Instance.new("Frame")
+    SmartSpeedKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+    SmartSpeedKnob.Position = UDim2.new(0, 0, 0.5, 0)
+    SmartSpeedKnob.Size = UDim2.fromOffset(16, 16)
+    SmartSpeedKnob.BackgroundColor3 = Color3.fromRGB(250, 250, 253)
+    SmartSpeedKnob.BorderSizePixel = 0
+    SmartSpeedKnob.Active = true
+    SmartSpeedKnob.ZIndex = 2
+    SmartSpeedKnob.Parent = SmartSpeedTrack
+    Corner(SmartSpeedKnob, 99)
+    Stroke(SmartSpeedKnob, COLORS.accent, 0.3, 1.4)
+
+    local SMART_SPEED_MIN, SMART_SPEED_MAX = 50, 1000
+
+    SyncSmartSpeedDisplay = function()
+        local Speed = math.floor(math.clamp(Config.SmartFallbackSpeed, SMART_SPEED_MIN, SMART_SPEED_MAX) + 0.5)
+        Config.SmartFallbackSpeed = Speed
+        local Alpha = (Speed - SMART_SPEED_MIN) / (SMART_SPEED_MAX - SMART_SPEED_MIN)
+        SmartSpeedFill.Size = UDim2.new(Alpha, 0, 1, 0)
+        SmartSpeedKnob.Position = UDim2.new(Alpha, 0, 0.5, 0)
+        SmartSpeedValue.Text = tostring(Speed) .. " studs/s"
+        SmartCaption.Text = SmartCaptionText()
+    end
+
+    SetSmartSpeedFromX = function(X, ShouldSave)
+        local Width = math.max(SmartSpeedTrack.AbsoluteSize.X, 1)
+        local Alpha = math.clamp((X - SmartSpeedTrack.AbsolutePosition.X) / Width, 0, 1)
+        Config.SmartFallbackSpeed = math.floor(SMART_SPEED_MIN + Alpha * (SMART_SPEED_MAX - SMART_SPEED_MIN) + 0.5)
+        SyncSmartSpeedDisplay()
+        if ShouldSave then SaveConfig() end
+    end
+
+    local function BeginSmartSpeedDrag(Input)
+        SmartSpeedDragging = true
+        SetSmartSpeedFromX(Input.Position.X, false)
+    end
+
+    SmartSpeedTrack.InputBegan:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1
+            or Input.UserInputType == Enum.UserInputType.Touch then
+            BeginSmartSpeedDrag(Input)
+        end
+    end)
+    SmartSpeedKnob.InputBegan:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1
+            or Input.UserInputType == Enum.UserInputType.Touch then
+            BeginSmartSpeedDrag(Input)
+        end
+    end)
+end
 
 SmartBtn.Activated:Connect(function() SmartOverlay.Visible = true end)
 SmartCloseBtn.Activated:Connect(function() SmartOverlay.Visible = false end)
@@ -2067,12 +2166,19 @@ do
         if SpeedDragging and IsMoveInput(Input) then
             SetSpeedFromX(Input.Position.X, false)
         end
+        if SmartSpeedDragging and IsMoveInput(Input) then
+            SetSmartSpeedFromX(Input.Position.X, false)
+        end
     end)
 
     UserInputService.InputEnded:Connect(function(Input)
         if SpeedDragging and IsDragInput(Input) then
             SpeedDragging = false
             SetSpeedFromX(Input.Position.X, true)
+        end
+        if SmartSpeedDragging and IsDragInput(Input) then
+            SmartSpeedDragging = false
+            SetSmartSpeedFromX(Input.Position.X, true)
         end
     end)
 
@@ -2087,6 +2193,7 @@ PaintHealth()
 PaintShowPath()
 PaintSmart()
 SyncSpeedDisplay()
+SyncSmartSpeedDisplay()
 -- Restaura el estado guardado (si Auto Collect quedo prendido la sesion
 -- pasada, arranca solo) sin re-guardar lo que se acaba de leer del archivo.
 SetState(Config.Enabled, false)
