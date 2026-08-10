@@ -1051,7 +1051,11 @@ end
 local HOP_MAX_PLAYERS = 2
 -- Tope de paginas (100 servers c/u) para no quedarse pagineando para siempre
 -- en un juego con muchos servers activos ni comerse un rate-limit de Roblox.
-local HOP_MAX_PAGES = 20
+-- Bajado de 20: encadenar muchos HttpGet sin pausa (ver el wait entre
+-- paginas mas abajo) dispara el rate-limit de games.roblox.com, GetServerPage
+-- empieza a devolver nil, y el hop se queda sin encontrar nada -- se veia
+-- como "ni hace hop".
+local HOP_MAX_PAGES = 8
 
 -- El listado de servers pide el UNIVERSE id (game.GameId), no el place id --
 -- TARGET_PLACE_ID sirve para TeleportToPlaceInstance, pero pasado aca como
@@ -1067,18 +1071,26 @@ local function GetServerPage(Cursor)
     local OK, Result = pcall(function()
         return HttpService:JSONDecode(game:HttpGet(Url))
     end)
-    if not OK then return nil end
+    -- warn(), no print(): asi se distingue en la consola "la API esta
+    -- fallando (rate-limit, red)" de "no hay servers chicos disponibles"
+    -- (que simplemente termina en GlobalBest = nil sin ningun error).
+    if not OK then
+        warn("[HONEY TP] Hop: fallo el request a games.roblox.com -- " .. tostring(Result))
+        return nil
+    end
     return Result
 end
 
 -- Antes, si ningun server tenia <= HOP_MAX_PLAYERS, Best quedaba nil y
 -- HopToSmallServer terminaba haciendo un Teleport SIN server destino -- eso
 -- te manda a cualquier server que el matchmaker elija, no a uno con poca
--- gente, que es justo lo que "no funciona bien el hop" describe. Ahora se
--- guarda ademas el server con menos gente visto en toda la busqueda
--- (GlobalBest) y se usa como resultado si ninguno entro bajo el umbral.
+-- gente. Ahora se guarda ademas el server con menos gente visto en la
+-- busqueda (GlobalBest) como resultado si ninguno entro bajo el umbral, Y se
+-- corta la busqueda apenas aparece un candidato aceptable en vez de agotar
+-- las HOP_MAX_PAGES paginas buscando el "mejor" posible -- menos requests
+-- por intento, menos chance de rate-limit.
 local function FindSmallServer()
-    local Best, GlobalBest
+    local GlobalBest
     local Cursor = ""
     local Pages = 0
     -- tostring(...) de los dos lados: si por lo que sea uno llegara como tipo
@@ -1094,16 +1106,16 @@ local function FindSmallServer()
             local N = Server.playing
             if N ~= nil and tostring(Server.id) ~= CurrentJobId then
                 if not GlobalBest or N < GlobalBest.playing then GlobalBest = Server end
-                if N <= HOP_MAX_PLAYERS then
-                    if N == 1 then return Server end
-                    if not Best or N < Best.playing then Best = Server end
-                end
+                if N <= HOP_MAX_PLAYERS then return Server end
             end
         end
         Cursor = Data.nextPageCursor or ""
         Pages = Pages + 1
+        if Cursor ~= "" and Cursor ~= nil and Pages < HOP_MAX_PAGES then
+            task.wait(0.2)
+        end
     until Cursor == "" or Cursor == nil or Pages >= HOP_MAX_PAGES
-    return Best or GlobalBest
+    return GlobalBest
 end
 
 -- TeleportToPlaceInstance/Teleport no avisan de forma confiable si el hop en
