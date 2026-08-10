@@ -1,5 +1,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Raiz del repo (dos niveles arriba de src/fetcher/), no el cwd del proceso:
+// asi el archivo se encuentra sin importar desde donde te arranque Railway.
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
  * Pool de proxies para el scraper de servers.
@@ -145,16 +151,28 @@ function envList() {
     }
     // Carga archivos de proxies: proxies.txt, proxies1.txt, proxies2.txt, etc.
     // Util cuando hay muchas lineas (10k+) y el textarea de Railway tiene limite.
-    const files = ["proxies.txt"];
-    for (let i = 1; i <= 10; i += 1) {
-        files.push(`proxies${i}.txt`);
-    }
-    for (const file of files) {
-        if (fs.existsSync(file)) {
-            for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+    // Se busca tanto al lado del repo (cwd) como en la raiz real del modulo,
+    // por si Railway arranca el proceso desde otro directorio.
+    const names = ["proxies.txt"];
+    for (let i = 1; i <= 10; i += 1) names.push(`proxies${i}.txt`);
+
+    const explicit = process.env.PROXY_FILE;
+    const candidates = explicit
+        ? [explicit, path.join(REPO_ROOT, explicit)]
+        : names.flatMap((n) => [n, path.join(REPO_ROOT, n)]);
+
+    const seen = new Set();
+    for (const file of candidates) {
+        const resolved = path.resolve(file);
+        if (seen.has(resolved)) continue;
+        seen.add(resolved);
+        if (fs.existsSync(resolved)) {
+            let n = 0;
+            for (const raw of fs.readFileSync(resolved, "utf8").split("\n")) {
                 const line = raw.trim();
-                if (line && !line.startsWith("#")) out.push(line);
+                if (line && !line.startsWith("#")) { out.push(line); n += 1; }
             }
+            console.log(`[fetcher] ${n} lineas leidas de ${resolved}`);
         }
     }
     return out;
