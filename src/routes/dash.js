@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { one, query } from "../db.js";
+import { poolStats } from "../fetcher/pool.js";
 import { requireUser } from "../lib/auth.js";
 
 export const dashRouter = Router();
@@ -230,6 +231,10 @@ dashRouter.get("/overview", async (req, res) => {
         ok: true,
         now: Date.now(),
         range,
+        // El pool vive en memoria, asi que esto no le agrega ni una consulta al
+        // polling: viaja de arriba con el resto del overview en vez de pedir
+        // /api/fetch/stats aparte cada 2 segundos.
+        fetcher: poolStats(),
         totals: {
             honey: totalHoney,
             hops: totalHops,

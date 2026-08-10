@@ -74,6 +74,16 @@ const stats = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * El ultimo error se muestra en el panel, asi que nunca puede arrastrar la
+ * password de un proxy: si el mensaje trae credenciales embebidas en una URL,
+ * se tapan antes de guardarlo.
+ */
+function recordError(message) {
+    stats.errors += 1;
+    stats.lastError = String(message).replace(/\/\/[^/@\s]+@/g, "//***@").slice(0, 200);
+}
+
 // ── Scraping ──────────────────────────────────────────────────────────────────
 
 // Este endpoint toma el PLACE id (109983668079237), no el universe id.
@@ -156,8 +166,7 @@ async function scrapeLoop(workerId) {
                     // despacio; con proxies rotativos casi no deberia verse.
                     stats.delayMs = Math.min(MAX_DELAY, stats.delayMs + 250);
                 } else {
-                    stats.errors += 1;
-                    stats.lastError = `${res.status || "net"}: ${res.error}`;
+                    recordError(`${res.status || "net"}: ${res.error}`);
                 }
                 break;
             }
@@ -266,6 +275,7 @@ export function poolStats() {
         proxiesPenalizados: penalizedCount(),
         workers: stats.running ? WORKERS : 0,
         delayMs: stats.delayMs,
+        delayBaseMs: MIN_DELAY,
         scrapeados: stats.scraped,
         dispensados: stats.dispensed,
         descartesBot: stats.drops,
@@ -338,8 +348,7 @@ export function startFetcher() {
     for (let i = 0; i < WORKERS; i += 1) {
         setTimeout(() => {
             scrapeLoop(i).catch((err) => {
-                stats.errors += 1;
-                stats.lastError = err.message;
+                recordError(err.message);
                 console.error(`[fetcher] worker ${i} murio:`, err.message);
             });
         }, i * 400);

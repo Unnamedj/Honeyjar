@@ -329,6 +329,18 @@ h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -0.02em; }
 .tile__foot { font-size: 11px; color: var(--ink-2); }
 .tile__spark { height: 26px; margin-top: 2px; }
 
+/* Aviso del pool de servers: explica que hacer, no solo que pasa. */
+.fetcher__note {
+    margin: 14px 0 0;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--honey);
+    border-radius: var(--radius-sm);
+}
+
 /* ── Grafico ──────────────────────────────────────────────── */
 
 .chart-card { margin-bottom: 18px; }

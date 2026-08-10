@@ -148,7 +148,12 @@ se llenó entre el scrape y el salto, el teleport falla, el bot avisa por
 `/api/fetch/drop` y ese server sale del pool en vez de repartirse a la siguiente
 cuenta.
 
-Para mirar cómo va: `GET /api/fetch/stats` con el token del bot.
+El panel lo muestra en **Pool de servers**: cuántos hay, cuántos quedan
+disponibles, cuántos sin repartir, y los rate-limits y errores del scraper. Si
+algo está mal configurado (sin proxies, o con proxies que no rotan la sesión) lo
+dice ahí mismo con qué hacer al respecto.
+
+Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
 
 ---
 
@@ -172,7 +177,7 @@ Para mirar cómo va: `GET /api/fetch/stats` con el token del bot.
 | POST | `/api/auth/register` · `/login` · `/logout` | Sesión |
 | GET | `/api/auth/me` | Usuario y token |
 | POST | `/api/auth/token/rotate` | Token nuevo, el viejo muere |
-| GET | `/api/overview?range=6h\|24h\|7d&tz=<min>` | Todo lo que pinta el panel |
+| GET | `/api/overview?range=6h\|24h\|7d&tz=<min>` | Todo lo que pinta el panel, incluido el estado del pool de servers |
 | POST | `/api/accounts/:id/command` | `enabled` `method` `speed` `autohop` `smart` `hop` |
 | DELETE | `/api/accounts/:id` | Quitar una cuenta y su historial |
 

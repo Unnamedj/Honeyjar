@@ -127,6 +127,7 @@ function render() {
         : "";
 
     renderChart();
+    renderFetcher();
     renderPodium();
     renderAccounts();
     renderRanking();
@@ -169,6 +170,87 @@ function renderChart() {
             ? `<span class="legend__item muted">Tocá una tarjeta de cuenta para ver su curva sola.</span>`
             : "";
     }
+}
+
+// ── Pool de servers (fetcher) ─────────────────────────────────
+//
+// De donde salen los servers a los que salta "Hop after collect". Sin el
+// fetcher cada cuenta pagina Roblox por su cuenta y se come el rate-limit;
+// con el, el panel scrapea una vez y reparte jobIds reservados.
+
+function tile(label, value, foot) {
+    return `<div class="tile">
+        <span class="tile__label">${escapeHtml(label)}</span>
+        <span class="tile__value num">${escapeHtml(value)}</span>
+        <span class="tile__foot">${escapeHtml(foot)}</span>
+    </div>`;
+}
+
+// El estado va SIEMPRE como punto + texto, igual que el de las cuentas: el
+// color repite lo que dice la etiqueta, no la reemplaza.
+function fetcherHealth(f) {
+    if (!f.running) return { tone: "muted", label: "Apagado" };
+    if (!f.total) return { tone: "warning", label: "Juntando servers" };
+    if (!f.disponibles) return { tone: "serious", label: "Pool agotado" };
+    return { tone: "good", label: "Activo" };
+}
+
+// Un aviso a la vez, el mas accionable primero: no sirve enterarse de que hay
+// rate-limits si en realidad el fetcher esta apagado.
+function fetcherNote(f) {
+    if (!f.running) {
+        return "El fetcher está apagado, así que cada cuenta busca servers por su cuenta contra " +
+            "Roblox. Para prenderlo, poné tus proxies en la variable PROXIES del deploy.";
+    }
+    if (!f.proxies) {
+        return "Corriendo sin proxies: todas las requests salen por la IP del panel y Roblox va " +
+            "a empezar a limitarlas. Poné PROXIES para repartirlas.";
+    }
+    if (f.rateLimits > 0 && !f.proxiesRotativos) {
+        return "Ninguno de tus proxies rota el id de sesión, así que todas las requests salen por " +
+            "la misma IP y por eso aparecen los rate-limits. Un proxy con “-session-” en el " +
+            "usuario da una IP distinta por request.";
+    }
+    if (f.proxiesPenalizados >= f.proxies && f.proxies > 0) {
+        return "Todos tus proxies están fuera de rotación por fallar. El scraper sigue saliendo " +
+            "directo mientras tanto.";
+    }
+    if (f.ultimoError) return `Último error: ${f.ultimoError}`;
+    return null;
+}
+
+function renderFetcher() {
+    const f = state.data.fetcher;
+    if (!f) return;
+
+    const health = fetcherHealth(f);
+    $("fetcher-badge").className = `badge badge--${health.tone}`;
+    $("fetcher-badge-text").textContent = health.label;
+
+    const visto = f.ultimoScrapeHaceS === null
+        ? "sin datos todavía"
+        : `visto ${ago(Date.now() - f.ultimoScrapeHaceS * 1000)}`;
+    $("fetcher-sub").textContent = `De acá salen los saltos de Hop after collect · ${visto}`;
+
+    // Frenado = el backoff subio el delay porque Roblox devolvio 429.
+    const frenado = f.delayMs > f.delayBaseMs;
+
+    $("fetcher-tiles").innerHTML = [
+        tile("En el pool", fmt(f.total), `${fmt(f.reservados)} repartidos ahora`),
+        tile("Disponibles", fmt(f.disponibles), `hasta ${f.maxPlayers} jugadores`),
+        tile("Sin repartir", fmt(f.frescos), "nunca los tocó nadie"),
+        tile("Rate limits", fmt(f.rateLimits), f.rateLimits ? "429 de Roblox" : "ninguno"),
+        tile("Errores", fmt(f.errores), f.errores ? "requests fallidas" : "ninguno"),
+        // Apagado, el delay configurado no describe nada: no hay requests que
+        // espaciar. Mostrarlo como un numero vivo seria inventar actividad.
+        f.running
+            ? tile("Ritmo", `${fmt(f.delayMs)} ms`, frenado ? "frenado por rate-limit" : "entre requests")
+            : tile("Ritmo", "—", "el scraper no corre"),
+    ].join("");
+
+    const note = fetcherNote(f);
+    $("fetcher-note").hidden = !note;
+    if (note) $("fetcher-note").textContent = note;
 }
 
 function renderPodium() {
