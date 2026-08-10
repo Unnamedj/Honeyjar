@@ -76,8 +76,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Scraping ──────────────────────────────────────────────────────────────────
 
-// Ojo: este endpoint toma el PLACE id (109983668079237), no el universe id. Es
-// el mismo que usa el hopper que ya funciona en produccion.
+// Este endpoint toma el PLACE id (109983668079237), no el universe id.
+// Comprobado contra la API: con el place da 200 y servers reales; con el
+// universe (7709344486) da 400 "The place is invalid.". Es ademas el mismo id
+// que el script le pasa a TeleportToPlaceInstance, que es lo que tiene que ser:
+// un jobId de otro place no se puede joinear.
 const ENDPOINTS = [
     `https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public?limit=100&excludeFullGames=true&sortOrder=Asc`,
     `https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public?limit=100&sortOrder=Asc`,

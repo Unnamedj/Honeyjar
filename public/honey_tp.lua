@@ -1064,20 +1064,19 @@ end
 local HOP_MAX_PLAYERS = 2
 -- Tope de paginas (100 servers c/u) para no quedarse pagineando para siempre
 -- en un juego con muchos servers activos ni comerse un rate-limit de Roblox.
--- Bajado de 20: encadenar muchos HttpGet sin pausa (ver el wait entre
--- paginas mas abajo) dispara el rate-limit de games.roblox.com, GetServerPage
--- empieza a devolver nil, y el hop se queda sin encontrar nada -- se veia
--- como "ni hace hop".
 local HOP_MAX_PAGES = 8
 
--- El listado de servers pide el UNIVERSE id (game.GameId), no el place id --
--- TARGET_PLACE_ID sirve para TeleportToPlaceInstance, pero pasado aca como
--- si fuera universe id devuelve servers de otro juego (o ninguno), y el
--- teleport termina fallando con "Can't join private instance through
--- specific joins" porque el Server.id no pertenece al place al que se
--- intenta entrar.
+-- El listado pide el PLACE id, el mismo que despues se le pasa a
+-- TeleportToPlaceInstance. Hubo una version que mandaba game.GameId (el
+-- universe id) creyendo que era lo que pedia el endpoint: no lo es, y la API
+-- contesta 400 "The place is invalid." SIEMPRE. Comprobado contra la API:
+--   place 109983668079237 -> 200, servers reales
+--   universe   7709344486 -> 400, "The place is invalid."
+-- Con eso, GetServerPage devolvia nil en cada intento y el hop no encontraba
+-- nunca nada -- el sintoma que se veia como "ni hace hop" y que se atribuyo a
+-- un rate-limit. No era rate-limit: era el id equivocado.
 local function GetServerPage(Cursor)
-    local Url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.GameId)
+    local Url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(TARGET_PLACE_ID)
     if Cursor and Cursor ~= "" then
         Url = Url .. "&cursor=" .. Cursor
     end
