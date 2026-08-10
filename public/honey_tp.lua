@@ -1568,12 +1568,18 @@ SmartDesc.Parent = SmartPopup
 
 local SmartTrack, SmartKnob, SmartHit = MakeSwitchRow(SmartPopup, 84, 40, "Smart Mode")
 
+-- Se arma en funcion, no en constante, porque los umbrales viven en Config y
+-- pueden cambiar en caliente (desde el panel): PaintSmart lo vuelve a pedir.
+local function SmartCaptionText()
+    return ("Gancho: %d-%d studs si esta listo (cooldown %ds) · Carpet a %d: cerca, lejos o en cooldown"):format(
+        Config.SmartFallbackDist, Config.SmartGrappleRange, GRAPPLE_COOLDOWN, Config.SmartFallbackSpeed)
+end
+
 local SmartCaption = Instance.new("TextLabel")
 SmartCaption.Position = UDim2.fromOffset(16, 134)
 SmartCaption.Size = UDim2.new(1, -32, 0, 44)
 SmartCaption.BackgroundTransparency = 1
-SmartCaption.Text = ("Gancho: >%d studs si esta listo (cooldown %ds) · Carpet: cerca o en cooldown"):format(
-    SMART_GRAPPLE_MIN_DIST, GRAPPLE_COOLDOWN)
+SmartCaption.Text = SmartCaptionText()
 SmartCaption.TextWrapped = true
 SmartCaption.TextXAlignment = Enum.TextXAlignment.Left
 SmartCaption.TextYAlignment = Enum.TextYAlignment.Top
@@ -1584,6 +1590,7 @@ SmartCaption.TextSize = 9
 SmartCaption.Parent = SmartPopup
 
 local function PaintSmart()
+    SmartCaption.Text = SmartCaptionText()
     SmartBtnState.TextColor3 = Config.SmartTP and COLORS.good or COLORS.muted
     SmartBtnState.Text = Config.SmartTP and "ON" or "OFF"
     SmartBtnStroke.Color = Config.SmartTP and COLORS.accent or COLORS.stroke
