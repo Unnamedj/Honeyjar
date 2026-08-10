@@ -43,14 +43,20 @@ const MAX_DELAY = envInt("FETCH_MAX_DELAY_MS", 10_000, { min: 1_000 });
 
 // Cuantos loops de scraping corren en paralelo. Se calcula DESPUES de parsear
 // los proxies (no solo mirar si PROXIES esta seteada) porque el numero
-// correcto depende de cuantos hay: con un solo proxy, 6 workers concurrentes
-// abren 6 tuneles CONNECT al mismo gateway al mismo tiempo, lo cual empieza a
-// generar errores de conexion (visto en produccion: 12 errores, el proxy
-// terminaba penalizado seguido). Con mas proxies, mas paralelismo tiene
-// sentido -- cada uno rota su propia IP.
+// correcto depende de cuantos hay: con un solo proxy, muchos workers
+// concurrentes abren varios tuneles CONNECT al mismo gateway al mismo tiempo,
+// lo cual genera errores de conexion (visto en produccion: 12 errores, el
+// proxy terminaba penalizado seguido). Con pocos proxies el tope se queda
+// bajo por eso. Con MUCHOS proxies reales (cientos, miles) ese riesgo
+// desaparece -- cada worker sale por una IP distinta, no hay nada que
+// saturar -- asi que el tope sube: mas paralelismo scrapeando significa mas
+// paginas por segundo, y por lo tanto mas servers "chicos" encontrados antes
+// de que se llenen. El techo de 24 no es por cuidar los proxies sino por no
+// mandarle a games.roblox.com mas requests por segundo de las que hacen
+// falta (el pool ya tiene su propio tope de tamaño en MAX_SERVERS).
 function defaultWorkers(proxyN) {
     if (!proxyN) return 2; // sin proxies no hay nada que paralelizar de mas
-    return Math.min(8, Math.max(2, proxyN * 3));
+    return Math.min(24, Math.max(2, proxyN * 3));
 }
 
 // ── Estado ────────────────────────────────────────────────────────────────────
