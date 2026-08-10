@@ -1081,12 +1081,18 @@ local function FindSmallServer()
     local Best, GlobalBest
     local Cursor = ""
     local Pages = 0
+    -- tostring(...) de los dos lados: si por lo que sea uno llegara como tipo
+    -- distinto (userdata/number) la comparacion directa nunca es true y el
+    -- server actual se cuela como candidato -- con N=1 (somos el unico ahi)
+    -- eso lo hace ganar casi siempre, que es como se ve "el hop me manda al
+    -- mismo server".
+    local CurrentJobId = tostring(game.JobId)
     repeat
         local Data = GetServerPage(Cursor)
         if not Data or not Data.data then break end
         for _, Server in ipairs(Data.data) do
             local N = Server.playing
-            if N ~= nil and Server.id ~= game.JobId then
+            if N ~= nil and tostring(Server.id) ~= CurrentJobId then
                 if not GlobalBest or N < GlobalBest.playing then GlobalBest = Server end
                 if N <= HOP_MAX_PLAYERS then
                     if N == 1 then return Server end
@@ -1108,14 +1114,18 @@ end
 -- de tirar la toalla despues de un solo intento.
 local HOP_RETRY_WAIT = 1.5
 
+-- Un Teleport SIN instancia especifica deja que el matchmaker de Roblox
+-- elija, y en juegos con pocos servers activos eso puede devolverte al MISMO
+-- server del que saliste -- exactamente el "me cambia al mismo server" que
+-- se reporto. Ahora nunca se dispara un teleport sin Server.id confirmado
+-- (y distinto al actual); si la busqueda no encuentra nada, se espera y se
+-- reintenta la busqueda en vez de tirar un teleport a ciegas.
 local function HopToSmallServer()
     while Config.Enabled and Config.AutoHop and MyToken == G.__HoneyTPRun do
         SetStatus("Buscando server chico...", Color3.fromRGB(255, 110, 110))
         local Server = FindSmallServer()
-        if Server then
+        if Server and tostring(Server.id) ~= tostring(game.JobId) then
             pcall(function() TeleportService:TeleportToPlaceInstance(TARGET_PLACE_ID, Server.id, LocalPlayer) end)
-        else
-            pcall(function() TeleportService:Teleport(TARGET_PLACE_ID, LocalPlayer) end)
         end
         task.wait(HOP_RETRY_WAIT)
     end
@@ -2359,15 +2369,21 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
             elseif Kind == "hop" then
                 -- HopToSmallServer loopea mientras AutoHop este prendido; para un
                 -- salto puntual se llama directo al buscador y se teleporta una vez.
+                -- Nunca un Teleport a ciegas (sin Server.id) -- eso deja elegir al
+                -- matchmaker de Roblox, que puede devolverte al mismo server del
+                -- que saliste. Si la busqueda no encuentra nada, reintenta un par
+                -- de veces antes de rendirse.
                 task.spawn(function()
                     SetStatus("Hop manual desde el panel...", COLORS.bad)
-                    local Server = FindSmallServer()
-                    if Server then
-                        pcall(function()
-                            TeleportService:TeleportToPlaceInstance(TARGET_PLACE_ID, Server.id, LocalPlayer)
-                        end)
-                    else
-                        pcall(function() TeleportService:Teleport(TARGET_PLACE_ID, LocalPlayer) end)
+                    for _ = 1, 4 do
+                        local Server = FindSmallServer()
+                        if Server and tostring(Server.id) ~= tostring(game.JobId) then
+                            pcall(function()
+                                TeleportService:TeleportToPlaceInstance(TARGET_PLACE_ID, Server.id, LocalPlayer)
+                            end)
+                            break
+                        end
+                        task.wait(1.5)
                     end
                 end)
             end
