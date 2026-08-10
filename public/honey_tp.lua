@@ -2072,36 +2072,30 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
     if not HubHttpPost then
         warn("[HONEY TP] Hub: tu ejecutor no expone request/http_request -- no puedo reportar")
     else
-        -- El jar no siempre lo agarra el collector: si el usuario tambien junta
-        -- alguno a mano, el remote ClaimHoney es la unica fuente que no se lo
-        -- pierde. Reusa NetBridge, que ya esta resuelto (o resolviendose) desde
-        -- arriba del archivo.
-        local HubHoney = 0
-        local HubHoneyHooked = false
+        -- El total real ya lo muestra el propio juego en su GUI (LeftBottom >
+        -- LeftBottom > CurrencyHoney). Leerlo de ahi es mas simple y mas fiel
+        -- que llevar un contador aparte: no hace falta escuchar ningun remote,
+        -- solo mirar el mismo texto que ve el jugador en pantalla.
+        local HubHoneyLabel
 
-        local function HubHookHoneyCounter()
-            if HubHoneyHooked then return true end
-            local Net = NetBridge.Get()
-            if not Net then return false end
-            local ok, remote = pcall(function() return Net:RemoteEvent("EventService/Bee/ClaimHoney") end)
-            if not ok or typeof(remote) ~= "Instance" then return false end
-            remote.OnClientEvent:Connect(function(_, Player)
-                if Player == LocalPlayer then HubHoney = HubHoney + 1 end
+        local function HubResolveHoneyLabel()
+            if HubHoneyLabel and HubHoneyLabel.Parent then return HubHoneyLabel end
+            local ok, label = pcall(function()
+                return PlayerGui.LeftBottom.LeftBottom.CurrencyHoney
             end)
-            HubHoneyHooked = true
-            return true
+            if ok and typeof(label) == "Instance" then
+                HubHoneyLabel = label
+            end
+            return HubHoneyLabel
         end
 
-        task.spawn(function()
-            for _ = 1, 12 do
-                if HubHookHoneyCounter() then return end
-                task.wait(5)
-            end
-            warn("[HONEY TP] Hub: no pude enganchar ClaimHoney -- uso el contador propio del collector")
-        end)
-
         local function HubReadHoney()
-            if HubHoneyHooked then return HubHoney end
+            local Label = HubResolveHoneyLabel()
+            if Label then
+                local Raw = tostring(Label.Text or ""):gsub("[^%d]", "")
+                local Num = tonumber(Raw)
+                if Num then return Num end
+            end
             return Collected
         end
 
