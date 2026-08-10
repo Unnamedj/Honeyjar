@@ -421,9 +421,9 @@ async function removeAccount(account) {
 
 function snippetFor(token) {
     return [
-        `getgenv().HONEY_HUB_URL = "${location.origin}"`,
-        `getgenv().HONEY_HUB_TOKEN = "${token}"`,
-        `loadstring(game:HttpGet("${location.origin}/honey_hub.lua"))()`,
+        `loadstring(game:HttpGet("${location.origin}/honey_hub.lua"))(`,
+        `    "${location.origin}", "${token}"`,
+        `)`,
     ].join("\n");
 }
 

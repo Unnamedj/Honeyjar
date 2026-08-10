@@ -71,9 +71,9 @@ En el panel, **＋ Conectar cuenta** te da el token y el snippet ya armado. Va
 antes del collector, en el ejecutor:
 
 ```lua
-getgenv().HONEY_HUB_URL   = "https://tu-app.up.railway.app"
-getgenv().HONEY_HUB_TOKEN = "hh_..."
-loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))()
+loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))(
+    "https://tu-app.up.railway.app", "hh_..."
+)
 ```
 
 El mismo token va en **todas** tus cuentas: se separan solas por usuario de

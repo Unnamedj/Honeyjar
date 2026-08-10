@@ -3,11 +3,12 @@
     ------------------------------------------------------------
     Reporta esta cuenta al panel web y aplica los comandos que llegan desde ahi.
 
-    Uso (antes del collector):
+    Uso (antes del collector) — URL y token van como argumentos al chunk, no
+    como variables globales:
 
-        getgenv().HONEY_HUB_URL   = "https://tu-app.up.railway.app"
-        getgenv().HONEY_HUB_TOKEN = "hh_..."
-        loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))()
+        loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))(
+            "https://tu-app.up.railway.app", "hh_..."
+        )
 
     Funciona SOLO, sin tocar el collector: cuenta los jars escuchando el mismo
     remote que usa el juego para reclamarlos (EventService/Bee/ClaimHoney), asi
@@ -34,15 +35,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 
-local G = (getgenv and getgenv()) or _G
-
-local BASE_URL = tostring(G.HONEY_HUB_URL or ""):gsub("/+$", "")
-local TOKEN    = tostring(G.HONEY_HUB_TOKEN or "")
+-- URL y token llegan como argumentos del loadstring, no por variable global.
+local BASE_URL, TOKEN = ...
+BASE_URL = tostring(BASE_URL or ""):gsub("/+$", "")
+TOKEN    = tostring(TOKEN or "")
 
 if BASE_URL == "" or TOKEN == "" then
-    warn("[HONEY HUB] falta HONEY_HUB_URL o HONEY_HUB_TOKEN — no arranco")
+    warn("[HONEY HUB] falta URL o token — pasalos como argumentos: loadstring(...)(url, token)")
     return
 end
+
+local G = (getgenv and getgenv()) or _G
 
 -- Solo una instancia viva. Si el script se ejecuta de nuevo (o el collector se
 -- recarga), el token nuevo invalida el loop anterior sin dejar dos reportando.

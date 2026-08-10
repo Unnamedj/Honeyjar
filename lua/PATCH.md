@@ -14,9 +14,9 @@ falta este parche: un solo bloque al final del script.
 ## Paso 1 — pegá las dos líneas del hub antes del collector
 
 ```lua
-getgenv().HONEY_HUB_URL   = "https://tu-app.up.railway.app"
-getgenv().HONEY_HUB_TOKEN = "hh_tu_token"
-loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))()
+loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))(
+    "https://tu-app.up.railway.app", "hh_tu_token"
+)
 ```
 
 El token sale del panel, en **＋ Conectar cuenta**. El mismo token va en todas
@@ -149,8 +149,9 @@ funcionar.
 ## Si algo no anda
 
 - **La cuenta no aparece.** Fijate en la consola del ejecutor. `[HONEY HUB] falta
-  HONEY_HUB_URL o HONEY_HUB_TOKEN` es que las dos líneas quedaron después del
-  `loadstring`; `no pude registrarme` es URL o token mal.
+  URL o token` es que la URL o el token no se pasaron como argumentos del
+  `loadstring(...)(url, token)`; `no pude registrarme` es que están pero uno de
+  los dos está mal.
 - **Aparece pero el honey queda en 0.** El enganche a `ClaimHoney` falló (la
   carpeta `Packages` todavía cargaba). Reintenta 12 veces cada 5 s; si igual no
   entra, aplicá el parche y el contador sale del collector.
