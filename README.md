@@ -67,8 +67,8 @@ npm start                 # http://localhost:3000
 
 ## Conectar una cuenta
 
-En el panel, **＋ Conectar cuenta** te da el token y el snippet ya armado. Va
-antes del collector, en el ejecutor:
+En el panel, **＋ Conectar cuenta** te da el token y el snippet ya armado. Es
+una sola línea, en el ejecutor:
 
 ```lua
 loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))(
@@ -76,12 +76,16 @@ loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))(
 )
 ```
 
-El mismo token va en **todas** tus cuentas: se separan solas por usuario de
-Roblox. En unos segundos aparecen en el panel con su avatar y su contador.
+`honey_hub.lua` es solo un loader: descarga el collector (`honey_tp.lua`) de la
+misma URL y lo arranca con esos mismos dos argumentos. El reporte a Railway y
+el control remoto ya vienen integrados en el collector — no hay un segundo
+paso ni un parche que pegar a mano (ver [`lua/PATCH.md`](lua/PATCH.md) si
+veniás de una versión anterior).
 
-Así como está ya te da honey (total y por cuenta), ritmo, ranking, racha, hops,
-server y uptime. Para que además puedas **controlarlas desde la web**, aplicá el
-parche de [`lua/PATCH.md`](lua/PATCH.md): un bloque al final del collector.
+El mismo token va en **todas** tus cuentas: se separan solas por usuario de
+Roblox. En unos segundos aparecen en el panel con su avatar y su contador,
+honey (total y por cuenta), ritmo, ranking, racha, hops, server, uptime, y los
+botones de control ya funcionando.
 
 ---
 
@@ -174,8 +178,9 @@ public/
   css/style.css      sistema visual (tema oscuro único, deliberado)
   js/charts.js       gráficos en SVG a mano, sin librerías
   js/panel.js        estado, render y polling
-  honey_hub.lua      el cliente que se ejecuta en el juego
-lua/PATCH.md         cómo enganchar el collector para el control remoto
+  honey_hub.lua      loader: descarga honey_tp.lua y lo arranca con (url, token)
+  honey_tp.lua       el collector — movimiento, GUI, y el reporte a Railway integrado
+lua/PATCH.md         notas para quien venía de la versión con parche manual
 ```
 
 ### Sobre los colores
