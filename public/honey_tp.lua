@@ -2149,67 +2149,6 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
             }
         end
 
-        -- Los comandos que manda el panel se aplican directo sobre el collector:
-        -- es el mismo scope, no hace falta indireccion via bridge.
-        local function HubApplyCommand(Kind, Value)
-            if Kind == "enabled" then
-                SetState(Value == "on")
-
-            elseif Kind == "method" then
-                Config.Method = Value
-                SaveConfig()
-                PaintMethods()
-                -- Mismo gesto que el boton de la GUI: cortar el viaje en curso
-                -- para que el metodo nuevo se use ya, no recien en el proximo jar.
-                Cancel = true
-                task.delay(0.1, function() Cancel = false end)
-
-            elseif Kind == "speed" then
-                Config.Speed = math.clamp(tonumber(Value) or Config.Speed, 50, 1000)
-                SaveConfig()
-                SyncSpeedDisplay()
-
-            elseif Kind == "autohop" then
-                Config.AutoHop = (Value == "on")
-                SaveConfig()
-                PaintHop()
-
-            elseif Kind == "smart" then
-                Config.SmartTP = (Value == "on")
-                SaveConfig()
-                PaintSmart()
-
-            elseif Kind == "hop" then
-                -- HopToSmallServer loopea mientras AutoHop este prendido; para un
-                -- salto puntual se llama directo al buscador y se teleporta una vez.
-                task.spawn(function()
-                    SetStatus("Hop manual desde el panel...", COLORS.bad)
-                    local Server = FindSmallServer()
-                    if Server then
-                        pcall(function()
-                            TeleportService:TeleportToPlaceInstance(TARGET_PLACE_ID, Server.id, LocalPlayer)
-                        end)
-                    else
-                        pcall(function() TeleportService:Teleport(TARGET_PLACE_ID, LocalPlayer) end)
-                    end
-                end)
-            end
-        end
-
-        local HubAcked = {}
-        local function HubHandleCommands(List)
-            if type(List) ~= "table" then return end
-            for _, Command in ipairs(List) do
-                if type(Command) == "table" and Command.id then
-                    local ok, err = pcall(HubApplyCommand, Command.kind, Command.value)
-                    if not ok then
-                        warn("[HONEY TP] Hub: comando '" .. tostring(Command.kind) .. "' fallo -- " .. tostring(err))
-                    end
-                    table.insert(HubAcked, Command.id)
-                end
-            end
-        end
-
         local HubBeatMs = 5000
 
         task.spawn(function()
@@ -2219,21 +2158,14 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 return
             end
             if type(Hello.beatMs) == "number" then HubBeatMs = Hello.beatMs end
-            HubHandleCommands(Hello.commands)
 
             print(("[HONEY TP] Hub: conectado como %s (beat %dms)"):format(LocalPlayer.Name, HubBeatMs))
 
             while MyToken == G.__HoneyTPRun do
                 local Payload = HubSnapshot()
-                if #HubAcked > 0 then
-                    Payload.ack = HubAcked
-                    HubAcked = {}
-                end
-
                 local Res = HubHttpPost("/api/bot/beat", Payload)
                 if Res then
                     if type(Res.beatMs) == "number" then HubBeatMs = Res.beatMs end
-                    HubHandleCommands(Res.commands)
                 end
 
                 task.wait(HubBeatMs / 1000)
