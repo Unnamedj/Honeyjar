@@ -143,10 +143,14 @@ function envList() {
     for (const chunk of String(process.env.PROXIES ?? "").split(/[,\n]/)) {
         if (chunk.trim()) out.push(chunk.trim());
     }
-    const file = process.env.PROXY_FILE;
-    if (file && fs.existsSync(file)) {
-        for (const line of fs.readFileSync(file, "utf8").split("\n")) {
-            if (line.trim()) out.push(line.trim());
+    // Sin PROXY_FILE explicito, si hay un proxies.txt al lado del repo (el que
+    // se commitea con la lista pegada) lo usamos solo: es mas facil que andar
+    // seteando una variable mas en Railway.
+    const file = process.env.PROXY_FILE || "proxies.txt";
+    if (fs.existsSync(file)) {
+        for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+            const line = raw.trim();
+            if (line && !line.startsWith("#")) out.push(line);
         }
     }
     return out;

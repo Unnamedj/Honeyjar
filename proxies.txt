@@ -1,0 +1,14 @@
+# Un proxy por linea. Lineas vacias y las que empiezan con # se ignoran.
+#
+# Formatos aceptados (los mismos que PROXIES):
+#   user:pass@host:puerto      http://user:pass@host:puerto
+#   host:puerto:user:pass      user:pass:host:puerto      host:puerto
+#
+# Pegá acá las 10.000 lineas de Nettify, una por linea, y commiteá el archivo.
+# Railway lo trae con cada deploy porque viaja en el repo -- no hace falta
+# tocar la variable PROXIES en la consola.
+#
+# Si las lineas ya traen su propio session-id (session-XXXX) fijo por Nettify,
+# acordate de poner PROXY_ROTATE_SESSION=0 en las variables de Railway, sino
+# el fetcher las va a rotar igual y puede pisar el session-id que ya te
+# asignaron.
