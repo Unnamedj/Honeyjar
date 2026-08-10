@@ -1121,6 +1121,34 @@ local Running = false
 local EmptyScans = 0
 local EMPTY_SCANS_BEFORE_HOP = 6
 
+-- ScanHoney recorre una tabla hash: el orden que devuelve no tiene relacion
+-- con la posicion de las jarras, asi que sin esto el collector saltaba de un
+-- lado al otro del mapa en vez de hacer un solo recorrido fluido. Aca se
+-- elige siempre la mas cercana a la posicion ACTUAL (no a la de arranque del
+-- scan), recalculando en cada paso, para que la ruta completa quede como una
+-- sola linea continua.
+local function ClosestHoneyIndex(List, FromPos)
+    local BestIdx, BestDist
+    local i = 1
+    while i <= #List do
+        local Honey = List[i]
+        if not Honey.Parent then
+            table.remove(List, i)
+        else
+            local Pos = HoneyPosition(Honey)
+            if Pos then
+                local Dist = (Pos - FromPos).Magnitude
+                if not BestDist or Dist < BestDist then
+                    BestDist = Dist
+                    BestIdx = i
+                end
+            end
+            i = i + 1
+        end
+    end
+    return BestIdx
+end
+
 local function ProcessQueue()
     if Running then return end
     Running = true
@@ -1130,10 +1158,18 @@ local function ProcessQueue()
 
             if #Honeys > 0 then
                 EmptyScans = 0
-                SetStatus(("Collecting (%d left)"):format(#Honeys), ON_COLOR)
-                for _, Honey in ipairs(Honeys) do
+                while #Honeys > 0 do
                     if not Config.Enabled or MyToken ~= G.__HoneyTPRun then break end
-                    if Honey.Parent then CollectHoney(Honey) end
+
+                    local Root = GetRoot()
+                    if not Root then break end
+
+                    local Idx = ClosestHoneyIndex(Honeys, Root.Position)
+                    if not Idx then break end
+
+                    local Honey = table.remove(Honeys, Idx)
+                    SetStatus(("Collecting (%d left)"):format(#Honeys), ON_COLOR)
+                    CollectHoney(Honey)
                 end
             elseif Config.AutoHop then
                 -- Un scan vacio puede ser el mapa todavia cargando; varios
