@@ -1050,6 +1050,9 @@ end
 -- cualquier server con hueco.
 -- ============================================================
 local HOP_MAX_PLAYERS = 2
+-- Tope de paginas (100 servers c/u) para no quedarse pagineando para siempre
+-- en un juego con muchos servers activos ni comerse un rate-limit de Roblox.
+local HOP_MAX_PAGES = 20
 
 local function GetServerPage(Cursor)
     local Url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(TARGET_PLACE_ID)
@@ -1063,22 +1066,33 @@ local function GetServerPage(Cursor)
     return Result
 end
 
+-- Antes, si ningun server tenia <= HOP_MAX_PLAYERS, Best quedaba nil y
+-- HopToSmallServer terminaba haciendo un Teleport SIN server destino -- eso
+-- te manda a cualquier server que el matchmaker elija, no a uno con poca
+-- gente, que es justo lo que "no funciona bien el hop" describe. Ahora se
+-- guarda ademas el server con menos gente visto en toda la busqueda
+-- (GlobalBest) y se usa como resultado si ninguno entro bajo el umbral.
 local function FindSmallServer()
-    local Best
+    local Best, GlobalBest
     local Cursor = ""
+    local Pages = 0
     repeat
         local Data = GetServerPage(Cursor)
         if not Data or not Data.data then break end
         for _, Server in ipairs(Data.data) do
             local N = Server.playing
-            if N ~= nil and N <= HOP_MAX_PLAYERS and Server.id ~= game.JobId then
-                if N == 1 then return Server end
-                if not Best or N < Best.playing then Best = Server end
+            if N ~= nil and Server.id ~= game.JobId then
+                if not GlobalBest or N < GlobalBest.playing then GlobalBest = Server end
+                if N <= HOP_MAX_PLAYERS then
+                    if N == 1 then return Server end
+                    if not Best or N < Best.playing then Best = Server end
+                end
             end
         end
         Cursor = Data.nextPageCursor or ""
-    until Cursor == "" or Cursor == nil
-    return Best
+        Pages = Pages + 1
+    until Cursor == "" or Cursor == nil or Pages >= HOP_MAX_PAGES
+    return Best or GlobalBest
 end
 
 -- TeleportToPlaceInstance/Teleport no avisan de forma confiable si el hop en
