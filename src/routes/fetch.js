@@ -1,23 +1,27 @@
 import { Router } from "express";
-import { resolveBotUser } from "../lib/auth.js";
 import { drop, poolStats, take } from "../fetcher/pool.js";
 
 export const fetchRouter = Router();
 
 /**
- * API del fetcher. Se autentica con el MISMO api_token que ya usa el bot para
- * reportar (Authorization: Bearer hh_...), asi el script no tiene que manejar
- * una credencial mas. El token identifica al usuario, no a la cuenta: el pool
- * de servers es compartido, lo que se reparte son jobIds distintos.
+ * API del fetcher. UN SOLO secreto compartido (FETCH_TOKEN), no una cuenta
+ * por usuario ni por sesion: el pool es el mismo para todos los bots, asi
+ * que alcanza con que el script conozca este token fijo -- va embebido en
+ * el .lua que se distribuye, no lo escribe cada cuenta a mano. Si
+ * FETCH_TOKEN no esta seteado en el entorno, queda abierto (util en local).
  */
-async function requireBot(req, res, next) {
-    const user = await resolveBotUser(req);
-    if (!user) return res.status(401).json({ error: "token_invalido" });
-    req.user = user;
+const FETCH_TOKEN = process.env.FETCH_TOKEN || "";
+
+function requireFetchToken(req, res, next) {
+    if (!FETCH_TOKEN) return next();
+    const header = req.get("authorization") ?? "";
+    const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+    const raw = bearer || req.body?.token || req.query?.token;
+    if (raw !== FETCH_TOKEN) return res.status(401).json({ error: "token_invalido" });
     next();
 }
 
-fetchRouter.use(requireBot);
+fetchRouter.use(requireFetchToken);
 
 // ── /api/fetch/server: dame jobIds a los que saltar ──────────────────────────
 fetchRouter.get("/server", (req, res) => {
