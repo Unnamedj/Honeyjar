@@ -67,6 +67,11 @@ local Config = {
     AutoHop = false,
     SmartTP = false,
     Enabled = false,
+    -- Umbrales de Smart TP (ver SmartPickMethod mas abajo): configurables,
+    -- se guardan y se leen igual que el resto de Config.
+    SmartGrappleRange  = 700,  -- alcance real del gancho cuando esta listo
+    SmartFallbackDist  = 250,  -- por debajo de esto (o con el gancho en cooldown) se usa Carpet
+    SmartFallbackSpeed = 250,  -- velocidad de Carpet en ese fallback / tramo corto
 }
 
 if readfile and isfile and isfile(CONFIG_FILE) then
@@ -84,6 +89,12 @@ if readfile and isfile and isfile(CONFIG_FILE) then
             if type(Data.AutoHop) == "boolean" then Config.AutoHop = Data.AutoHop end
             if type(Data.SmartTP) == "boolean" then Config.SmartTP = Data.SmartTP end
             if type(Data.Enabled) == "boolean" then Config.Enabled = Data.Enabled end
+            local GrappleRange = tonumber(Data.SmartGrappleRange)
+            if GrappleRange then Config.SmartGrappleRange = math.clamp(GrappleRange, 100, 2000) end
+            local FallbackDist = tonumber(Data.SmartFallbackDist)
+            if FallbackDist then Config.SmartFallbackDist = math.clamp(FallbackDist, 20, 1000) end
+            local FallbackSpeed = tonumber(Data.SmartFallbackSpeed)
+            if FallbackSpeed then Config.SmartFallbackSpeed = math.clamp(FallbackSpeed, 50, 1000) end
         end
     end)
 end
@@ -99,6 +110,9 @@ local function SaveConfig()
             AutoHop = Config.AutoHop,
             SmartTP = Config.SmartTP,
             Enabled = Config.Enabled,
+            SmartGrappleRange = Config.SmartGrappleRange,
+            SmartFallbackDist = Config.SmartFallbackDist,
+            SmartFallbackSpeed = Config.SmartFallbackSpeed,
         }))
     end)
 end
@@ -850,19 +864,25 @@ local function RouteLength(FromPos, Route)
     return Total
 end
 
--- Smart TP: el gancho tiene ~3s de cooldown propio del juego y da alcance
--- para tramos largos (~700 studs); sin el, la carpet sola es confiable hasta
--- ~300 studs. Prendido, cada TP elige solo: si el tramo es largo Y el gancho
--- ya esta listo, lo usa; si es corto o el gancho todavia esta en cooldown, va
--- directo por carpet en vez de gastar en vano un intento que el juego va a
--- ignorar de todas formas.
-local SMART_GRAPPLE_MIN_DIST = 300
-
+-- Smart TP: el gancho tiene ~3s de cooldown propio del juego. Prendido, cada
+-- TP elige solo entre las tres situaciones de Config.SmartGrappleRange /
+-- Config.SmartFallbackDist / Config.SmartFallbackSpeed (todas configurables,
+-- se guardan igual que el resto de Config):
+--   - Tramo corto (<= SmartFallbackDist): carpet directo a SmartFallbackSpeed,
+--     no vale la pena esperar o gastar el gancho para el ultimo tramo.
+--   - Tramo largo (> SmartFallbackDist, <= SmartGrappleRange) y el gancho ya
+--     salio del cooldown: Grapple, a la velocidad normal de Config.Speed.
+--   - Cualquier otro caso (gancho en cooldown, o mas lejos de lo que el
+--     gancho alcanza): carpet, tambien a SmartFallbackSpeed -- sin el gancho
+--     la carpet sola no es confiable a full velocidad en tramos largos.
 local function SmartPickMethod(Distance)
-    if Distance > SMART_GRAPPLE_MIN_DIST and GrappleReady() then
-        return "Grapple"
+    if Distance > Config.SmartFallbackDist
+        and Distance <= Config.SmartGrappleRange
+        and GrappleReady()
+    then
+        return "Grapple", nil
     end
-    return "Carpet"
+    return "Carpet", Config.SmartFallbackSpeed
 end
 
 -- Mismo orden que DoVelocityTP del hub: fijar la vida, enganchar, frenar en
@@ -873,8 +893,9 @@ local function MoveToPosition(Target)
     if not HRP then return end
 
     local Method = Config.Method
+    local SmartSpeedOverride = nil
     if Config.SmartTP then
-        Method = SmartPickMethod((Target - HRP.Position).Magnitude)
+        Method, SmartSpeedOverride = SmartPickMethod((Target - HRP.Position).Magnitude)
     end
 
     -- El tiron del gancho y el vuelo rapido pueden matarte a mitad de camino, y
@@ -910,6 +931,7 @@ local function MoveToPosition(Target)
     -- En tramos cortos la velocidad alta se pasa de largo y rebota.
     local Len = RouteLength(HRP.Position, Route)
     local MainSpeed = (Len < 100) and math.min(200, Config.Speed) or Config.Speed
+    if SmartSpeedOverride then MainSpeed = math.min(MainSpeed, SmartSpeedOverride) end
     VelMoveThrough(HRP, Stepped, MainSpeed, true)
 
     if HRP and HRP.Parent then
@@ -2143,7 +2165,72 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
             }
         end
 
-        local HubBeatMs = 5000
+        -- Los comandos que manda el panel se aplican directo sobre el
+        -- collector: es el mismo scope, no hace falta indireccion via bridge.
+        -- Ninguno de estos dispara un remote del juego -- solo tocan Config
+        -- (que ya maneja la GUI local) y, para "hop", TeleportService, que es
+        -- la API estandar de Roblox para cambiar de server, no un remote del
+        -- juego que un anti-cheat pueda marcar como ajeno.
+        local function HubApplyCommand(Kind, Value)
+            if Kind == "enabled" then
+                SetState(Value == "on")
+
+            elseif Kind == "method" then
+                Config.Method = Value
+                SaveConfig()
+                PaintMethods()
+                -- Mismo gesto que el boton de la GUI: cortar el viaje en curso
+                -- para que el metodo nuevo se use ya, no recien en el proximo jar.
+                Cancel = true
+                task.delay(0.1, function() Cancel = false end)
+
+            elseif Kind == "speed" then
+                Config.Speed = math.clamp(tonumber(Value) or Config.Speed, 50, 1000)
+                SaveConfig()
+                SyncSpeedDisplay()
+
+            elseif Kind == "autohop" then
+                Config.AutoHop = (Value == "on")
+                SaveConfig()
+                PaintHop()
+
+            elseif Kind == "smart" then
+                Config.SmartTP = (Value == "on")
+                SaveConfig()
+                PaintSmart()
+
+            elseif Kind == "hop" then
+                -- HopToSmallServer loopea mientras AutoHop este prendido; para un
+                -- salto puntual se llama directo al buscador y se teleporta una vez.
+                task.spawn(function()
+                    SetStatus("Hop manual desde el panel...", COLORS.bad)
+                    local Server = FindSmallServer()
+                    if Server then
+                        pcall(function()
+                            TeleportService:TeleportToPlaceInstance(TARGET_PLACE_ID, Server.id, LocalPlayer)
+                        end)
+                    else
+                        pcall(function() TeleportService:Teleport(TARGET_PLACE_ID, LocalPlayer) end)
+                    end
+                end)
+            end
+        end
+
+        local HubAcked = {}
+        local function HubHandleCommands(List)
+            if type(List) ~= "table" then return end
+            for _, Command in ipairs(List) do
+                if type(Command) == "table" and Command.id then
+                    local ok, err = pcall(HubApplyCommand, Command.kind, Command.value)
+                    if not ok then
+                        warn("[HONEY TP] Hub: comando '" .. tostring(Command.kind) .. "' fallo -- " .. tostring(err))
+                    end
+                    table.insert(HubAcked, Command.id)
+                end
+            end
+        end
+
+        local HubBeatMs = 2000
 
         task.spawn(function()
             local Hello = HubHttpPost("/api/bot/hello", HubSnapshot())
@@ -2152,14 +2239,21 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 return
             end
             if type(Hello.beatMs) == "number" then HubBeatMs = Hello.beatMs end
+            HubHandleCommands(Hello.commands)
 
             print(("[HONEY TP] Hub: conectado como %s (beat %dms)"):format(LocalPlayer.Name, HubBeatMs))
 
             while MyToken == G.__HoneyTPRun do
                 local Payload = HubSnapshot()
+                if #HubAcked > 0 then
+                    Payload.ack = HubAcked
+                    HubAcked = {}
+                end
+
                 local Res = HubHttpPost("/api/bot/beat", Payload)
                 if Res then
                     if type(Res.beatMs) == "number" then HubBeatMs = Res.beatMs end
+                    HubHandleCommands(Res.commands)
                 end
 
                 task.wait(HubBeatMs / 1000)

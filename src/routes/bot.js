@@ -9,7 +9,7 @@ const STATUS_KINDS = new Set(["idle", "collecting", "waiting", "hopping", "stopp
 
 function beatInterval() {
     const raw = Number(process.env.BEAT_INTERVAL_MS);
-    return Number.isFinite(raw) && raw >= 1000 ? Math.floor(raw) : 5000;
+    return Number.isFinite(raw) && raw >= 1000 ? Math.floor(raw) : 2000;
 }
 
 function clampInt(value, min, max, fallback = 0) {
