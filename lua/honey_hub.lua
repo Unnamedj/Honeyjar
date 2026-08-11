@@ -6,9 +6,13 @@
     dos argumentos. El reporte a Railway y el control remoto ya viven adentro
     del collector -- no hay un segundo paso ni un parche que pegar a mano.
 
-        loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))(
+        loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua?token=hh_..."))(
             "https://tu-app.up.railway.app", "hh_..."
         )
+
+    El token va tambien en la URL porque el server no entrega el .lua sin el:
+    game:HttpGet no manda headers, asi que la query es el unico lugar donde
+    puede viajar.
 
     El mismo token va en todas tus cuentas: se separan solas por usuario de
     Roblox (ver /api/bot/hello en el server). Si el ejecutor no expone
@@ -28,9 +32,19 @@ if BASE_URL == "" or TOKEN == "" then
     return
 end
 
-local ok, chunkOrErr = pcall(game.HttpGet, game, BASE_URL .. "/honey_tp.lua")
+-- El collector tampoco es publico: va el mismo token que ya tenemos.
+local url = BASE_URL .. "/honey_tp.lua?token=" .. game:GetService("HttpService"):UrlEncode(TOKEN)
+
+local ok, chunkOrErr = pcall(game.HttpGet, game, url)
 if not ok then
     warn("[HONEY HUB] no pude descargar el collector — " .. tostring(chunkOrErr))
+    return
+end
+
+-- El server contesta un comentario de Lua cuando el token no sirve: compila
+-- igual (no hace nada) y el usuario se queda sin saber por que. Mejor decirlo.
+if chunkOrErr:match("^%-%- Honey Hub:") then
+    warn("[HONEY HUB] " .. chunkOrErr:gsub("^%-%-%s*Honey Hub:%s*", ""):gsub("%s+$", ""))
     return
 end
 

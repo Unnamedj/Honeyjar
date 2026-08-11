@@ -72,8 +72,10 @@ function statusOf(account) {
 function avatarHtml(account, size = "md") {
     const tone = statusOf(account).tone;
     const initial = escapeHtml((account.username || "?").slice(0, 1).toUpperCase());
+    // Sin onerror inline: la CSP no permite handlers en el HTML. El que se
+    // rompe se saca en wireAvatarFallback, despues de pintar.
     const photo = account.avatarUrl
-        ? `<img src="${escapeHtml(account.avatarUrl)}" alt="" loading="lazy" onerror="this.remove()">`
+        ? `<img src="${escapeHtml(account.avatarUrl)}" alt="" loading="lazy" data-avatar>`
         : "";
     return `<div class="avatar avatar--${size} avatar--ring" style="--ring:${RING[tone]}">${initial}${photo}</div>`;
 }
@@ -136,6 +138,21 @@ function render() {
     renderPodium();
     renderAccounts();
     renderRanking();
+    wireAvatarFallback();
+}
+
+/**
+ * Una miniatura de Roblox que no carga deja el hueco con el icono roto encima
+ * de la inicial. Antes esto era un onerror= en el HTML; la CSP no deja handlers
+ * inline, asi que el listener se engancha aca despues de pintar.
+ */
+function wireAvatarFallback() {
+    for (const img of document.querySelectorAll("img[data-avatar]")) {
+        img.removeAttribute("data-avatar");
+        // Si ya fallo antes de llegar hasta aca, el evento no vuelve a salir.
+        if (img.complete && img.naturalWidth === 0) img.remove();
+        else img.addEventListener("error", () => img.remove(), { once: true });
+    }
 }
 
 function renderChart() {
@@ -643,9 +660,11 @@ function setView(view) {
 
 // ── modal de conexión ─────────────────────────────────────────
 
+// El token va tambien en la URL: el server no entrega el .lua sin el, asi que
+// el codigo del collector no queda colgado de un link publico.
 function snippetFor(token) {
     return [
-        `loadstring(game:HttpGet("${location.origin}/honey_hub.lua"))(`,
+        `loadstring(game:HttpGet("${location.origin}/honey_hub.lua?token=${encodeURIComponent(token)}"))(`,
         `    "${location.origin}", "${token}"`,
         `)`,
     ].join("\n");

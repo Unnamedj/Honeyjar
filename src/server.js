@@ -10,14 +10,53 @@ import { authRouter } from "./routes/auth.js";
 import { botRouter } from "./routes/bot.js";
 import { dashRouter } from "./routes/dash.js";
 import { fetchRouter } from "./routes/fetch.js";
+import { scriptsRouter } from "./routes/scripts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 const app = express();
 app.set("trust proxy", 1); // Railway termina TLS en su proxy
+app.disable("x-powered-by"); // no hace falta anunciar con que esta hecho
 app.use(express.json({ limit: "64kb" }));
 app.use(cookieParser());
+
+/**
+ * Cabeceras de seguridad. Sin helmet: son seis lineas y una dependencia menos
+ * que auditar.
+ *
+ * La CSP es la que hace el trabajo. Todo el JS del panel son modulos con src
+ * propio, asi que 'self' alcanza y NO hace falta 'unsafe-inline' para scripts
+ * -- eso es lo que convierte un XSS en nada. Los estilos si lo necesitan
+ * porque el panel usa atributos style= y los graficos SVG se pintan inline.
+ * Las unicas imagenes de afuera son los avatares de Roblox.
+ */
+const CSP = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https://*.rbxcdn.com",
+    "connect-src 'self'",
+    "font-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+].join("; ");
+
+app.use((_req, res, next) => {
+    res.setHeader("Content-Security-Policy", CSP);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=(), interest-cohort=()");
+    // HSTS solo en produccion: en local no hay TLS y esto dejaria el navegador
+    // insistiendo con https://localhost por meses.
+    if (process.env.NODE_ENV === "production") {
+        res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+    }
+    next();
+});
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
@@ -31,6 +70,8 @@ app.use("/api/fetch", fetchRouter);
 // propio guardia (sesion + ser el primer usuario).
 app.use("/api/admin", adminRouter);
 app.use("/api", dashRouter);
+// Los .lua se sirven aca y no desde public/: exigen token (ver routes/scripts.js).
+app.use("/", scriptsRouter);
 
 app.use(
     express.static(PUBLIC_DIR, {

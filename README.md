@@ -58,6 +58,8 @@ que no hay paso de migración manual.
 | `PORT` | no | La define Railway; en local, 3000 |
 | `BEAT_INTERVAL_MS` | no | Cada cuánto reporta el bot. Default 5000 |
 | `ALLOW_SIGNUP` | no | `0` cierra el registro de usuarios nuevos |
+| `MAX_USERS` | no | Tope de cuentas en el hub. Vacío o `0` = sin tope |
+| `FETCH_TOKEN` | no | Secreto compartido para `/api/fetch/*` y para bajar los `.lua` |
 | `PROXIES` | no | Proxies para el fetcher. Sin esto el fetcher queda apagado (ver abajo) |
 | `FETCHER` | no | `1` prende el fetcher sin proxies, `0` lo apaga siempre |
 
@@ -98,13 +100,16 @@ todavía no te habilitaron, ahí mismo dice que falta la aprobación). Es una so
 línea, en el ejecutor:
 
 ```lua
-loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))(
+loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua?token=hh_..."))(
     "https://tu-app.up.railway.app", "hh_..."
 )
 ```
 
-`honey_hub.lua` es solo un loader: descarga el collector (`honey_tp.lua`) de la
-misma URL y lo arranca con esos mismos dos argumentos. El reporte a Railway y
+El token va **dos veces** y no es un error: en la URL para que el server te
+entregue el archivo (los `.lua` no son públicos), y como argumento para que el
+collector sepa a dónde reportar. `honey_hub.lua` es solo un loader: descarga el
+collector (`honey_tp.lua`) con ese mismo token y lo arranca con esos dos
+argumentos. El reporte a Railway y
 el control remoto ya vienen integrados en el collector — no hay un segundo
 paso ni un parche que pegar a mano (ver [`lua/PATCH.md`](lua/PATCH.md) si
 veniás de una versión anterior).
@@ -229,7 +234,10 @@ Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
 - El `user_id` sale **siempre** de la cookie firmada, nunca del body. La
   pertenencia de una cuenta se chequea dentro del `WHERE` de la propia consulta,
   así no hay ventana entre verificar y escribir.
-- Login con el mismo mensaje para usuario inexistente y contraseña incorrecta.
+- Login con el mismo mensaje para usuario inexistente y contraseña incorrecta —
+  y con el mismo tiempo: cuando el usuario no existe igual se corre un bcrypt
+  contra un hash de descarte, porque una respuesta instantánea delata cuáles
+  existen.
 - La aprobación se chequea en el server en cada request, no escondiendo botones:
   sin acceso el token no viaja al panel y `/api/bot/*` contesta `403` aunque el
   usuario se lo haya guardado de antes. `/api/admin/*` es solo del primer
@@ -238,6 +246,48 @@ Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
   base; los comandos pasan por una lista blanca con validador por tipo.
 - El token es lo único que separa un panel de otro: tratalo como una contraseña.
   Si se filtró, **Rotar token**.
+
+### Límites de uso
+
+En memoria, sin dependencias ni Redis, con ventana deslizante ([`src/lib/limit.js`](src/lib/limit.js)):
+
+| Ruta | Límite | Nota |
+|---|---|---|
+| `POST /api/auth/register` | 3 por hora y por IP | crear cuentas cuesta un bcrypt de 12 rondas |
+| `POST /api/auth/login` | 10 **fallidos** por 15 min y por IP | entrar bien no gasta cupo |
+| `/api/fetch/*` | 600 por minuto y por IP | techo alto: decenas de bots desde una casa entran cómodos |
+
+`MAX_USERS` es el freno duro: el límite por IP para al que insiste desde un
+lado, el tope global para también al que reparte los intentos entre muchas IPs.
+Con `ALLOW_SIGNUP=0` se cierra el registro del todo.
+
+El estado vive en el proceso, así que se pierde en cada deploy (lo peor que
+pasa es que alguien recupere sus intentos antes de tiempo) y **sería un límite
+por instancia** si algún día el hub corre replicado.
+
+### El código del collector
+
+Los `.lua` **no se sirven desde `public/`**: viven en [`lua/`](lua/) y salen por
+[`src/routes/scripts.js`](src/routes/scripts.js), que pide `?token=` — el de una
+cuenta aprobada o el `FETCH_TOKEN` compartido. Sin token, `/honey_tp.lua`
+devuelve un `401` con un comentario de Lua explicando por qué, así que pegar la
+URL en el navegador no te da el collector. El token viaja en la query y no en un
+header porque `game:HttpGet` no manda headers: es lo único que el ejecutor
+puede hacer.
+
+Lo que **no** se puede esconder, y conviene tenerlo claro: el HTML, el CSS y el
+JS del panel los ejecuta el navegador, así que cualquiera que entre los puede
+leer. Ahí no hay ningún secreto — los tokens, las consultas y las decisiones de
+permiso están todas del lado del server, y el panel solo muestra lo que el
+server le manda.
+
+### Cabeceras
+
+`X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+`Permissions-Policy`, HSTS en producción, y una CSP con `script-src 'self'` —
+sin `unsafe-inline` para scripts, que es lo que convierte un XSS en nada. Por
+eso el panel no tiene ni un `onclick=` en el HTML: todos los handlers se
+enganchan desde el JS.
 
 ---
 
@@ -249,9 +299,11 @@ src/
   db.js              pool de Postgres + migración al arrancar
   schema.sql         esquema, idempotente
   lib/auth.js        bcrypt, JWT en cookie, requireUser y requireAdmin
+  lib/limit.js       límite de requests por ventana deslizante, en memoria
   lib/roblox.js      miniaturas de avatar con caché de 6 h
   routes/admin.js    usuarios del hub y quién tiene acceso al loader
   routes/auth.js     registro, login, token
+  routes/scripts.js  entrega los .lua, solo con token válido
   routes/bot.js      ingesta de telemetría y entrega de comandos
   routes/dash.js     el overview que consume el panel
   routes/fetch.js    API del fetcher: dispensa jobIds, acepta descartes
@@ -264,9 +316,10 @@ public/
   css/style.css      sistema visual (tema oscuro único, deliberado)
   js/charts.js       gráficos en SVG a mano, sin librerías
   js/panel.js        estado, render y polling
+lua/                 (fuera de public/: no se sirven sin token)
   honey_hub.lua      loader: descarga honey_tp.lua y lo arranca con (url, token)
   honey_tp.lua       el collector — movimiento, GUI, y el reporte a Railway integrado
-lua/PATCH.md         notas para quien venía de la versión con parche manual
+  PATCH.md           notas para quien venía de la versión con parche manual
 ```
 
 ### Sobre los colores

@@ -1,7 +1,21 @@
 import { Router } from "express";
 import { drop, poolStats, take } from "../fetcher/pool.js";
+import { rateLimit } from "../lib/limit.js";
 
 export const fetchRouter = Router();
+
+// Techo alto a proposito: una cuenta pide jobIds cuando va a hopear (cada
+// minuto o dos), asi que 600 por minuto deja correr decenas de bots desde la
+// misma casa y aun asi frena a un script en loop vaciando el pool con un token
+// que se filtro.
+fetchRouter.use(
+    rateLimit({
+        windowMs: 60 * 1000,
+        max: 600,
+        error: "demasiados_pedidos",
+        message: "Demasiados pedidos al pool desde esta IP.",
+    })
+);
 
 /**
  * API del fetcher. UN SOLO secreto compartido (FETCH_TOKEN), no una cuenta

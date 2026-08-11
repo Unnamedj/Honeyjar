@@ -8,15 +8,61 @@ import {
     newApiToken,
     requireUser,
 } from "../lib/auth.js";
+import { onlyFailures, rateLimit } from "../lib/limit.js";
 
 export const authRouter = Router();
 
 const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,24}$/;
 const MIN_PASSWORD = 8;
+const MAX_PASSWORD = 200;   // bcrypt igual corta en 72 bytes; esto es contra el CPU
 
-authRouter.post("/register", async (req, res) => {
+// Hash de una contrasena que no es de nadie, para gastar el mismo tiempo
+// comparando cuando el usuario no existe (ver el login).
+const DUMMY_HASH = "$2a$12$oJqECnqCb23k4vRtNUL3EeQvOsqXlWXGdBUOIKCXlGotxeAn0nCzW";
+
+/**
+ * Cuantas cuentas puede haber en total. 0 o sin setear = sin tope. Es el freno
+ * duro: el limite por IP frena al que insiste desde un lado, esto frena a un
+ * botnet igual.
+ */
+function maxUsers() {
+    const n = Math.floor(Number(process.env.MAX_USERS));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+// Crear cuentas es caro (bcrypt de 12 rondas) y no hay ninguna razon legitima
+// para abrir tres en una hora desde la misma IP.
+const registerLimit = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 3,
+    error: "demasiadas_cuentas",
+    message: "Demasiadas cuentas nuevas desde acá. Probá de nuevo en un rato.",
+});
+
+// El login cuenta SOLO los fallidos: al que acierta no se le gasta cupo, asi
+// que esto molesta al que prueba contrasenas y no al que entra y sale.
+const loginLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    error: "demasiados_intentos",
+    message: "Demasiados intentos fallidos. Esperá unos minutos.",
+    countIf: onlyFailures,
+});
+
+authRouter.post("/register", registerLimit, async (req, res) => {
     if (process.env.ALLOW_SIGNUP === "0") {
         return res.status(403).json({ error: "signup_cerrado" });
+    }
+
+    const cap = maxUsers();
+    if (cap) {
+        const { count } = await one("SELECT count(*)::int AS count FROM users");
+        if (count >= cap) {
+            return res.status(403).json({
+                error: "cupo_lleno",
+                message: "El hub no está tomando cuentas nuevas.",
+            });
+        }
     }
 
     const username = String(req.body?.username ?? "").trim();
@@ -28,10 +74,10 @@ authRouter.post("/register", async (req, res) => {
             message: "3 a 24 caracteres: letras, numeros, punto, guion o guion bajo.",
         });
     }
-    if (password.length < MIN_PASSWORD) {
+    if (password.length < MIN_PASSWORD || password.length > MAX_PASSWORD) {
         return res.status(400).json({
-            error: "password_corta",
-            message: `Minimo ${MIN_PASSWORD} caracteres.`,
+            error: "password_invalida",
+            message: `Entre ${MIN_PASSWORD} y ${MAX_PASSWORD} caracteres.`,
         });
     }
 
@@ -66,9 +112,9 @@ authRouter.post("/register", async (req, res) => {
     });
 });
 
-authRouter.post("/login", async (req, res) => {
-    const username = String(req.body?.username ?? "").trim();
-    const password = String(req.body?.password ?? "");
+authRouter.post("/login", loginLimit, async (req, res) => {
+    const username = String(req.body?.username ?? "").trim().slice(0, 64);
+    const password = String(req.body?.password ?? "").slice(0, MAX_PASSWORD);
 
     const user = await one(
         `SELECT id, username, password_hash, api_token,
@@ -78,8 +124,12 @@ authRouter.post("/login", async (req, res) => {
     );
 
     // Mismo mensaje para "no existe" y "clave mal": decir cual de los dos fue
-    // regala una forma de averiguar que usuarios existen.
-    const ok = user && (await checkPassword(password, user.password_hash));
+    // regala una forma de averiguar que usuarios existen. Cuando el usuario no
+    // existe igual se corre un bcrypt contra un hash de descarte, porque si no
+    // la respuesta vuelve al instante y el reloj delata cuales existen.
+    const ok = user
+        ? await checkPassword(password, user.password_hash)
+        : await checkPassword(password, DUMMY_HASH).then(() => false);
     if (!ok) {
         return res.status(401).json({
             error: "credenciales",
