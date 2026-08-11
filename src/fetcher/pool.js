@@ -1,5 +1,5 @@
 import { getJson } from "./http.js";
-import { loadProxies, nextProxy, penalizedCount, proxyCount, rotatingCount } from "./proxies.js";
+import { loadProxies, nextProxy, proxyCount, rotatingCount, uniqueCount } from "./proxies.js";
 
 /**
  * FETCHER -- pool de servers frescos para el auto-hop.
@@ -15,6 +15,12 @@ import { loadProxies, nextProxy, penalizedCount, proxyCount, rotatingCount } fro
  * jobId y se lleva uno que NADIE mas se llevo (dispensado = reservado un rato).
  * Resultado: cero rate-limit del lado del bot, servers frescos, y dos cuentas
  * nunca reciben el mismo destino.
+ *
+ * La mecanica (delay adaptativo, reciclado, wipes de cache, orden de dispensado)
+ * es la del hopper de referencia, que es la que esta probada corriendo contra
+ * este mismo place. Lo unico propio de Honeyjar es el umbral de jugadores: aca
+ * el hop existe para caer en servers CHICOS (el evento rinde mas), asi que el
+ * bot pide `?max=N` y el pool respeta ese techo al dispensar.
  */
 
 function envInt(name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -28,36 +34,36 @@ const PLACE_ID = envInt("FETCH_PLACE_ID", 109983668079237, { min: 1 });
 const MAX_PLAYERS = envInt("FETCH_MAX_PLAYERS", 2, { min: 0, max: 100 });
 
 const MAX_PAGES = envInt("FETCH_MAX_PAGES", 10, { min: 1, max: 50 });
-const MAX_SERVERS = envInt("FETCH_MAX_SERVERS", 20_000, { min: 100 });
 
 // Un jobId dispensado se reserva este rato: si el bot llego bien, el server ya
 // no esta vacio; si el teleport fallo, vuelve a la rueda solo.
 const RECYCLE_MS = envInt("FETCH_RECYCLE_MS", 90_000, { min: 5_000 });
 
-// Un listado de hace mas de esto ya no dice nada del server: en un juego activo
-// se llena en minutos. Mandar a un bot ahi es gastarle un teleport.
-const STALE_MS = envInt("FETCH_STALE_MS", 8 * 60_000, { min: 30_000 });
-
-const MIN_DELAY = envInt("FETCH_MIN_DELAY_MS", 120, { min: 0 });
+// Delay adaptativo entre requests. Arranca abajo y sube 100ms por cada 429;
+// cada respuesta buena lo baja de a 10ms. Es el UNICO freno del scraper: no hay
+// penalizacion de proxies, porque con gateways rotativos la linea que fallo no
+// vuelve a usar la misma IP igual.
+const MIN_DELAY = envInt("FETCH_MIN_DELAY_MS", 100, { min: 0 });
 const MAX_DELAY = envInt("FETCH_MAX_DELAY_MS", 10_000, { min: 1_000 });
+const DELAY_UP = 100;
+const DELAY_DOWN = 10;
 
-// Cuantos loops de scraping corren en paralelo. Se calcula DESPUES de parsear
-// los proxies (no solo mirar si PROXIES esta seteada) porque el numero
-// correcto depende de cuantos hay: con un solo proxy, muchos workers
-// concurrentes abren varios tuneles CONNECT al mismo gateway al mismo tiempo,
-// lo cual genera errores de conexion (visto en produccion: 12 errores, el
-// proxy terminaba penalizado seguido). Con pocos proxies el tope se queda
-// bajo por eso. Con MUCHOS proxies reales (cientos, miles) ese riesgo
-// desaparece -- cada worker sale por una IP distinta, no hay nada que
-// saturar -- asi que el tope sube: mas paralelismo scrapeando significa mas
-// paginas por segundo, y por lo tanto mas servers "chicos" encontrados antes
-// de que se llenen. El techo de 24 no es por cuidar los proxies sino por no
-// mandarle a games.roblox.com mas requests por segundo de las que hacen
-// falta (el pool ya tiene su propio tope de tamaño en MAX_SERVERS).
-function defaultWorkers(proxyN) {
-    if (!proxyN) return 2; // sin proxies no hay nada que paralelizar de mas
-    return Math.min(24, Math.max(2, proxyN * 3));
-}
+// El listado de Roblox repite servers viejos sin parar, asi que el pool se
+// ensucia con jobIds que hace rato dejaron de estar vacios. En vez de expirar
+// entrada por entrada, se tira casi toda la cache cada tanto y se deja que los
+// scrapers la vuelvan a llenar con lo que el listado dice AHORA.
+const WIPE_MS = envInt("FETCH_WIPE_MS", 2 * 60 * 60_000, { min: 60_000 });
+const WIPE_KEEP = 0.20; // se conserva este porcentaje, elegido al azar
+
+// Freno de tamaño: si el pool pasa el techo y se queda arriba un rato largo,
+// es que esta juntando basura mas rapido de lo que la gasta. Wipe completo.
+const SERVER_THRESHOLD = envInt("FETCH_MAX_SERVERS", 50_000, { min: 100 });
+const THRESHOLD_MS = envInt("FETCH_THRESHOLD_MS", 50 * 60_000, { min: 60_000 });
+
+// Cuantos loops de scraping corren en paralelo. El de referencia usa 10 fijos y
+// es lo que rinde: mas paralelismo no consigue mas servers (el listado es el
+// mismo), solo mas requests por segundo contra games.roblox.com.
+const DEFAULT_WORKERS = 10;
 
 // ── Estado ────────────────────────────────────────────────────────────────────
 
@@ -66,7 +72,10 @@ const servers = new Map();
 /** jobIds nunca dispensados y por debajo del umbral: cola FIFO para dispensar en O(1). */
 let freshQueue = [];
 /** jobIds que un bot reporto como inservibles (lleno, no existe): no se re-cachean. */
-const dropped = new Map(); // jobId -> timestamp
+const dropped = new Set();
+
+let overThresholdSince = null;
+let lastWipeAt = Date.now();
 
 const stats = {
     startedAt: Date.now(),
@@ -105,6 +114,7 @@ const ENDPOINTS = [
     `https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public?limit=100&excludeFullGames=true&sortOrder=Asc`,
     `https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public?limit=100&sortOrder=Asc`,
     `https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public?limit=100&excludeFullGames=true&sortOrder=Desc`,
+    `https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public?limit=100&sortOrder=Desc`,
 ];
 
 /**
@@ -167,28 +177,14 @@ async function scrapeLoop(workerId) {
             await sleep(stats.delayMs);
 
             const proxy = nextProxy();
-
-            // Hay proxies configurados pero TODOS estan en penalizacion ahora
-            // mismo: nextProxy() devuelve null igual que cuando no hay proxies,
-            // pero acomodar eso como "pedido directo" es lo que causaba el loop
-            // visto en produccion -- el unico proxy se penaliza, los workers
-            // caen todos juntos a la IP de Railway, Roblox les tira 429 en
-            // rafaga, delayMs se va al techo y no hay forma de que se recupere
-            // porque el siguiente intento vuelve a caer directo. Mejor esperar
-            // a que salga de penalizacion en vez de pedirle nada a Roblox.
-            if (!proxy && proxyCount() > 0) {
-                await sleep(2_000);
-                break;
-            }
-
-            const res = await getJson(url, { proxy, timeoutMs: proxy ? 15_000 : 8_000 });
+            const res = await getJson(url, { proxy, timeoutMs: proxy ? 15_000 : 5_000 });
 
             if (!res.ok) {
                 if (res.status === 429) {
                     stats.rateLimits += 1;
-                    // Sin proxies esto pasa seguido y la unica salida es ir mas
-                    // despacio; con proxies rotativos casi no deberia verse.
-                    stats.delayMs = Math.min(MAX_DELAY, stats.delayMs + 250);
+                    stats.delayMs = Math.min(MAX_DELAY, stats.delayMs + DELAY_UP);
+                    // Con el delay ya subido, esperar una tanda antes de volver.
+                    await sleep(stats.delayMs * 2);
                 } else {
                     recordError(`${res.status || "net"}: ${res.error}`);
                 }
@@ -196,7 +192,9 @@ async function scrapeLoop(workerId) {
             }
 
             // Cada respuesta buena recupera un poco de velocidad.
-            if (stats.delayMs > MIN_DELAY) stats.delayMs = Math.max(MIN_DELAY, stats.delayMs - 25);
+            if (stats.delayMs > MIN_DELAY) {
+                stats.delayMs = Math.max(MIN_DELAY, stats.delayMs - DELAY_DOWN);
+            }
 
             const encontrados = ingest(res.data);
             nuevos += encontrados;
@@ -220,7 +218,6 @@ async function scrapeLoop(workerId) {
 
 function usable(entry, now, maxPlayers) {
     if (!entry) return false;
-    if (now - entry.seenAt > STALE_MS) return false;
     if (entry.takenAt && now - entry.takenAt < RECYCLE_MS) return false;
     return entry.playing <= maxPlayers;
 }
@@ -270,7 +267,7 @@ export function take(count = 1, maxPlayers = MAX_PLAYERS) {
 export function drop(jobId) {
     if (typeof jobId !== "string" || !jobId) return false;
     const existia = servers.delete(jobId);
-    dropped.set(jobId, Date.now());
+    dropped.add(jobId);
     if (existia) stats.drops += 1;
     return existia;
 }
@@ -279,10 +276,8 @@ export function poolStats() {
     const now = Date.now();
     let disponibles = 0;
     let reservados = 0;
-    let viejos = 0;
     for (const entry of servers.values()) {
-        if (now - entry.seenAt > STALE_MS) viejos += 1;
-        else if (entry.takenAt && now - entry.takenAt < RECYCLE_MS) reservados += 1;
+        if (entry.takenAt && now - entry.takenAt < RECYCLE_MS) reservados += 1;
         else if (entry.playing <= MAX_PLAYERS) disponibles += 1;
     }
     return {
@@ -292,11 +287,10 @@ export function poolStats() {
         disponibles,
         reservados,
         frescos: freshQueue.length,
-        viejos,
         descartados: dropped.size,
         proxies: proxyCount(),
         proxiesRotativos: rotatingCount(),
-        proxiesPenalizados: penalizedCount(),
+        proxiesUnicos: uniqueCount(),
         workers: stats.running ? stats.workers : 0,
         delayMs: stats.delayMs,
         delayBaseMs: MIN_DELAY,
@@ -310,40 +304,107 @@ export function poolStats() {
         uptimeS: Math.floor((now - stats.startedAt) / 1000),
         maxPlayers: MAX_PLAYERS,
         recycleS: Math.floor(RECYCLE_MS / 1000),
-        staleS: Math.floor(STALE_MS / 1000),
+        proximoWipeS: Math.max(0, Math.floor((WIPE_MS - (now - lastWipeAt)) / 1000)),
     };
 }
 
 // ── Mantenimiento ─────────────────────────────────────────────────────────────
 
-function cleanup() {
+function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+}
+
+/**
+ * Tira la cache y deja solo `keep` (0 = todo). Lo que sobrevive vuelve a contar
+ * como fresco: nadie tiene reserva sobre el, asi que se puede volver a repartir.
+ */
+function wipe(keep = 0) {
+    const antes = servers.size;
+    const ids = [...servers.keys()];
+    shuffle(ids);
+    const sobreviven = new Set(ids.slice(0, Math.floor(ids.length * keep)));
+
+    for (const id of ids) {
+        if (sobreviven.has(id)) {
+            const entry = servers.get(id);
+            entry.takenAt = 0;
+        } else {
+            servers.delete(id);
+        }
+    }
+
+    freshQueue = [...servers.values()]
+        .filter((e) => e.playing <= MAX_PLAYERS)
+        .map((e) => e.id);
+    dropped.clear();
+    lastWipeAt = Date.now();
+
+    const pct = antes > 0 ? Math.round(((antes - servers.size) / antes) * 100) : 0;
+    console.log(`[fetcher] wipe de cache: ${antes} -> ${servers.size} (${pct}% afuera)`);
+}
+
+/** Tira el pool entero a mano (endpoint /api/fetch/clear). */
+export function clearPool() {
+    const antes = servers.size;
+    wipe(0);
+    return antes;
+}
+
+/**
+ * Libera a mano las reservas ya vencidas (endpoint /api/fetch/recycle). El
+ * dispensado ya las ignora solo por tiempo; esto sirve para ver el numero.
+ */
+export function recycleNow() {
+    const now = Date.now();
+    let reciclados = 0;
+    for (const entry of servers.values()) {
+        if (entry.takenAt && now - entry.takenAt >= RECYCLE_MS) {
+            entry.takenAt = 0;
+            reciclados += 1;
+            if (entry.playing <= MAX_PLAYERS) freshQueue.push(entry.id);
+        }
+    }
+    return reciclados;
+}
+
+function maintenance() {
     const now = Date.now();
 
-    for (const [id, entry] of servers) {
-        if (now - entry.seenAt > STALE_MS) servers.delete(id);
-    }
-    // Un jobId descartado se olvida despues de un rato: los servers se vacian y
-    // el mismo id puede volver a servir.
-    for (const [id, at] of dropped) {
-        if (now - at > 30 * 60_000) dropped.delete(id);
+    // Freno de tamaño: arriba del techo un rato largo => wipe completo.
+    if (servers.size > SERVER_THRESHOLD) {
+        if (!overThresholdSince) {
+            overThresholdSince = now;
+            console.log(
+                `[fetcher] el pool (${servers.size}) paso el techo de ${SERVER_THRESHOLD}, ` +
+                `contando ${Math.floor(THRESHOLD_MS / 60_000)} min`
+            );
+        } else if (now - overThresholdSince >= THRESHOLD_MS) {
+            console.log(`[fetcher] el pool quedo arriba del techo demasiado tiempo -- wipe total`);
+            wipe(0);
+            overThresholdSince = null;
+        }
+    } else if (overThresholdSince) {
+        console.log(`[fetcher] el pool (${servers.size}) volvio abajo del techo`);
+        overThresholdSince = null;
     }
 
-    // La cola de frescos junta ids que ya se dispensaron o vencieron.
+    // Wipe periodico: se queda con una muestra chica y se rellena con lo que el
+    // listado diga ahora.
+    if (now - lastWipeAt >= WIPE_MS) wipe(WIPE_KEEP);
+
+    // La cola de frescos junta ids que ya se dispensaron.
     if (freshQueue.length > 1_000) {
         freshQueue = freshQueue.filter((id) => {
             const entry = servers.get(id);
             return entry && entry.takenAt === 0;
         });
     }
-
-    // Tope duro de memoria: se van los mas viejos.
-    if (servers.size > MAX_SERVERS) {
-        const porEdad = [...servers.values()].sort((a, b) => a.seenAt - b.seenAt);
-        for (const entry of porEdad.slice(0, servers.size - MAX_SERVERS)) servers.delete(entry.id);
-    }
 }
 
-let cleanupTimer = null;
+let maintenanceTimer = null;
 
 /**
  * Arranca el scraper. Por defecto solo si hay proxies configurados: sin ellos
@@ -360,27 +421,28 @@ export function startFetcher() {
     }
     if (!proxies && forzado !== "1" && forzado !== "on" && forzado !== "true") {
         console.log(
-            "[fetcher] sin proxies configurados (PROXIES) -- apagado.\n" +
+            "[fetcher] sin proxies configurados (proxies.txt o PROXIES) -- apagado.\n" +
             "  Los bots siguen hopeando solos contra games.roblox.com, como hasta ahora.\n" +
             "  Para prenderlo sin proxies (se come rate-limits): FETCHER=1"
         );
         return false;
     }
 
-    const workers = envInt("FETCH_WORKERS", defaultWorkers(proxies), { min: 1, max: 32 });
+    const workers = envInt("FETCH_WORKERS", DEFAULT_WORKERS, { min: 1, max: 32 });
     stats.workers = workers;
     stats.running = true;
     stats.startedAt = Date.now();
+    lastWipeAt = Date.now();
     for (let i = 0; i < workers; i += 1) {
         setTimeout(() => {
             scrapeLoop(i).catch((err) => {
                 recordError(err.message);
                 console.error(`[fetcher] worker ${i} murio:`, err.message);
             });
-        }, i * 400);
+        }, i * 500);
     }
-    cleanupTimer = setInterval(cleanup, 60_000);
-    cleanupTimer.unref?.();
+    maintenanceTimer = setInterval(maintenance, envInt("FETCH_MAINTENANCE_MS", 30_000, { min: 250 }));
+    maintenanceTimer.unref?.();
 
     console.log(
         `[fetcher] ${workers} workers scrapeando el place ${PLACE_ID} ` +
@@ -391,6 +453,6 @@ export function startFetcher() {
 
 export function stopFetcher() {
     stats.running = false;
-    if (cleanupTimer) clearInterval(cleanupTimer);
-    cleanupTimer = null;
+    if (maintenanceTimer) clearInterval(maintenanceTimer);
+    maintenanceTimer = null;
 }

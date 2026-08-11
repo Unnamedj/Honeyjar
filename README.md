@@ -66,8 +66,15 @@ que no hay paso de migración manual.
 | `ALLOW_SIGNUP` | no | `0` cierra el registro de usuarios nuevos |
 | `MAX_USERS` | no | Tope de cuentas en el hub. Vacío o `0` = sin tope |
 | `FETCH_TOKEN` | no | Secreto compartido para `/api/fetch/*` y para bajar los `.lua` |
-| `PROXIES` | no | Proxies para el fetcher. Sin esto el fetcher queda apagado (ver abajo) |
+| `PROXIES` | no | Proxies para el fetcher. Alternativa a `proxies.txt`. Sin ninguno de los dos el fetcher queda apagado (ver abajo) |
+| `PROXY_FILE` | no | Usar otro archivo en vez de `proxies.txt` / `proxies1..10.txt` |
+| `PROXY_STRIP_SESSION` | no | `0` respeta el `session-…` de cada línea (IP fija). Default: lo borra para que el gateway rote |
 | `FETCHER` | no | `1` prende el fetcher sin proxies, `0` lo apaga siempre |
+| `FETCH_WORKERS` | no | Scrapers en paralelo. Default 10 |
+| `FETCH_MAX_PLAYERS` | no | Umbral de "server chico". Default 2 |
+| `FETCH_RECYCLE_MS` | no | Cuánto queda reservado un jobId dispensado. Default 90000 |
+| `FETCH_WIPE_MS` | no | Cada cuánto se tira el 80% de la caché. Default 2 h |
+| `FETCH_MAX_SERVERS` | no | Techo del pool antes del freno. Default 50000 |
 
 ### Correrlo local
 
@@ -260,11 +267,40 @@ repartido entre proxies, y guarda los jobIds en un pool. El bot pide uno y se
 lleva uno **reservado para él**: nadie más lo recibe hasta que vence la reserva.
 Cero rate-limit del lado del bot, y dos cuentas nunca aterrizan juntas.
 
-Cómo se prende: pegá tus proxies en `PROXIES` y listo — no hay nada que tocar en
-el script. Con proxies residenciales tipo Nettify, el id de sesión va dentro del
-usuario (`…-session-aub815-time-1`) y es lo que fija la IP de salida; el fetcher
-lo **rota en cada request**, así que con un solo proxy ya tenés una IP distinta
-por request. No hace falta pegar una lista larga.
+Cómo se prende: pegá tus proxies en `proxies.txt` (o en la variable `PROXIES`) y
+listo — no hay nada que tocar en el script. Se leen también `proxies1.txt` …
+`proxies10.txt`, que es lo cómodo cuando son miles de líneas y no entran en el
+textarea de Railway.
+
+**Cómo trata las sesiones.** Los proveedores residenciales (Pulse, Nettify)
+meten la configuración adentro del usuario:
+
+```
+usuario_session-abc123_lifetime-30:password@gateway.pulseproxy.com:8080
+       ^ fija la IP de salida     ^ por cuántos minutos
+```
+
+Ese `session-…` es justo lo que un scraper no quiere: mientras no cambie, todo
+sale por **una sola IP** y el 429 llega igual que sin proxy. El fetcher lo
+**borra** antes de cada request y deja que el gateway rote solo, que es como
+esperan que se los use Pulse y compañía. Es el comportamiento probado en
+producción, y es mejor que inventar un id de sesión nuevo nosotros: si el
+proveedor exige que el id sea uno que él asignó, uno inventado puede terminar
+cayendo a una IP por defecto en vez de fallar limpio — indistinguible de un
+rate-limit real. Si alguna vez querés la IP pinneada, `PROXY_STRIP_SESSION=0`
+usa las líneas tal cual.
+
+Tampoco hay lista negra de proxies. Con un gateway rotativo la línea que falló
+no es "un proxy malo", es una IP de salida que salió mal, y la próxima ya es
+otra; además, al borrarles la sesión, mil líneas del mismo gateway son la misma
+credencial, así que castigar a una las sacaba a todas y dejaba al scraper
+girando en falso. El único freno es el **delay adaptativo**: arranca en 100 ms,
+sube 100 ms por cada 429 y baja 10 ms por cada respuesta buena.
+
+El pool no expira servers de a uno. Cada 2 horas se tira el 80% de la caché y se
+deja que los scrapers la rellenen con lo que el listado dice *ahora*; y si pasa
+las 50.000 entradas y se queda ahí 50 minutos, wipe completo. Es lo que evita
+que el pool se llene de jobIds que hace rato dejaron de estar vacíos.
 
 El script degrada solo, en los dos sentidos: si el panel no está, no tiene el
 fetcher prendido o el pool quedó vacío, `/api/fetch/server` contesta 503 y el
@@ -275,10 +311,12 @@ cuenta.
 
 El panel lo muestra en **Pool de servers**: cuántos hay, cuántos quedan
 disponibles, cuántos sin repartir, y los rate-limits y errores del scraper. Si
-algo está mal configurado (sin proxies, o con proxies que no rotan la sesión) lo
+algo está mal configurado (sin proxies, o el scraper frenado por rate-limits) lo
 dice ahí mismo con qué hacer al respecto.
 
-Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
+Desde afuera del panel, con el token del bot: `GET /api/fetch/stats` para verlo,
+`GET /api/fetch/recycle` para soltar las reservas ya vencidas y
+`GET /api/fetch/clear` para tirar el pool entero sin esperar al wipe.
 
 ---
 
@@ -294,6 +332,8 @@ Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
 | GET | `/api/fetch/server?size=<n>&max=<jugadores>` | Pide jobIds del pool. `503 pool_vacio` si no hay |
 | POST | `/api/fetch/drop` | `{jobId}` — ese server no sirve; lo saca del pool y devuelve reemplazo |
 | GET | `/api/fetch/stats` | Estado del pool y de los proxies |
+| GET | `/api/fetch/recycle` | Suelta a mano las reservas ya vencidas |
+| GET | `/api/fetch/clear` | Tira el pool entero (sin esperar al wipe periódico) |
 
 ### Dashboard (cookie de sesión)
 
@@ -396,7 +436,7 @@ src/
   routes/dash.js     el overview que consume el panel
   routes/fetch.js    API del fetcher: dispensa jobIds, acepta descartes
   fetcher/pool.js    el pool de servers: scrapers, reserva, reciclado
-  fetcher/proxies.js parseo de proxies y rotación del id de sesión
+  fetcher/proxies.js parseo de proxies y borrado del id de sesión
   fetcher/http.js    GET con JSON a través del túnel del proxy
 public/
   index.html         login y registro

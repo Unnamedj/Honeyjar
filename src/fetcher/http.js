@@ -1,6 +1,6 @@
 import https from "node:https";
 import { HttpsProxyAgent } from "https-proxy-agent";
-import { penalize, proxyUrl } from "./proxies.js";
+import { proxyUrl } from "./proxies.js";
 
 /**
  * GET + JSON.parse a traves de un proxy HTTP (tunel CONNECT). Se usa node:https
@@ -9,6 +9,12 @@ import { penalize, proxyUrl } from "./proxies.js";
  *
  * Nunca tira: devuelve { ok, status, data, error }. El scraper corre en un loop
  * infinito y una excepcion suelta ahi se lleva puesto el proceso entero.
+ *
+ * Un fallo NO saca al proxy de la rotacion. Con gateways rotativos la linea que
+ * fallo no es "un proxy malo": es una IP de salida que salio mal, y la de la
+ * proxima request ya es otra. Sacar la linea castigaba a todas las demas del
+ * mismo gateway (que al borrarles la sesion son la misma credencial) y dejaba
+ * al scraper sin salida. El unico freno es el delay adaptativo del pool.
  */
 export function getJson(url, { proxy = null, timeoutMs = 15_000 } = {}) {
     return new Promise((resolve) => {
@@ -33,7 +39,6 @@ export function getJson(url, { proxy = null, timeoutMs = 15_000 } = {}) {
         // nunca lo hay: la request se cuelga para siempre y con ella el worker
         // del scraper. Este timer es la unica garantia de que la promesa cierra.
         guard = setTimeout(() => {
-            penalize(proxy, 60_000);
             req?.destroy();
             done({ ok: false, status: 0, error: "timeout (proxy sin responder)" });
         }, timeoutMs + 2_000);
@@ -74,10 +79,7 @@ export function getJson(url, { proxy = null, timeoutMs = 15_000 } = {}) {
                     if (body.length < 4_000_000) body += chunk;
                 });
                 res.on("end", () => {
-                    if (status !== 200) {
-                        if (status === 407 || status === 403) penalize(proxy, 60_000);
-                        return done({ ok: false, status, error: `HTTP ${status}` });
-                    }
+                    if (status !== 200) return done({ ok: false, status, error: `HTTP ${status}` });
                     try {
                         done({ ok: true, status, data: JSON.parse(body) });
                     } catch {
@@ -88,15 +90,7 @@ export function getJson(url, { proxy = null, timeoutMs = 15_000 } = {}) {
             }
         );
 
-        req.on("timeout", () => {
-            penalize(proxy, 30_000);
-            req.destroy(new Error("timeout"));
-        });
-
-        req.on("error", (err) => {
-            // Socket caido/rechazado: casi siempre es el proxy, no Roblox.
-            penalize(proxy, 30_000);
-            done({ ok: false, status: 0, error: err.message });
-        });
+        req.on("timeout", () => req.destroy(new Error("timeout")));
+        req.on("error", (err) => done({ ok: false, status: 0, error: err.message }));
     });
 }

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { drop, poolStats, take } from "../fetcher/pool.js";
+import { clearPool, drop, poolStats, recycleNow, take } from "../fetcher/pool.js";
 import { rateLimit } from "../lib/limit.js";
 
 export const fetchRouter = Router();
@@ -68,4 +68,20 @@ fetchRouter.post("/drop", (req, res) => {
 // ── /api/fetch/stats: estado del pool (debug y panel) ────────────────────────
 fetchRouter.get("/stats", (_req, res) => {
     res.json(poolStats());
+});
+
+// ── /api/fetch/recycle: soltar a mano las reservas ya vencidas ───────────────
+// El dispensado ya las ignora solo cuando pasa el tiempo de reserva; esto es
+// para mirar el numero sin esperar.
+fetchRouter.get("/recycle", (_req, res) => {
+    const reciclados = recycleNow();
+    res.json({ ok: true, reciclados, ...poolStats() });
+});
+
+// ── /api/fetch/clear: tirar el pool entero ───────────────────────────────────
+// Para cuando el listado quedo lleno de servers que ya se llenaron y no querés
+// esperar al wipe periodico.
+fetchRouter.get("/clear", (_req, res) => {
+    const antes = clearPool();
+    res.json({ ok: true, antes, ...poolStats() });
 });

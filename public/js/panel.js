@@ -241,15 +241,10 @@ function fetcherNote(f) {
         return "Running with no proxies: every request goes out through the panel IP and Roblox " +
             "will start rate-limiting them. Set PROXIES to spread them out.";
     }
-    if (f.rateLimits > 0 && !f.proxiesRotativos) {
-        return "None of your proxies rotates the session id, so every request goes out through " +
-            "the same IP and that is where the rate limits come from. A proxy with “-session-” in " +
-            "the username gives a different IP per request.";
-    }
-    if (f.proxiesPenalizados >= f.proxies && f.proxies > 0) {
-        return "All your proxies are out of rotation after failing (check host, port and " +
-            "credentials). The scraper will NOT fall back to direct requests meanwhile — that " +
-            "would burn the panel IP — so the pool stops growing until one recovers.";
+    if (f.delayMs > f.delayBaseMs * 4) {
+        return "Roblox is rate-limiting the scraper, so it slowed itself down. If it does not " +
+            "recover, your proxies are handing out the same exit IP over and over — check that " +
+            "the gateway rotates and that the credentials are right.";
     }
     if (f.ultimoError) return `Last error: ${f.ultimoError}`;
     return null;
