@@ -8,12 +8,19 @@
 -- roblox_user_id), no roblox_user_id solo.
 -- ============================================================
 
+-- El PRIMER usuario (el id mas chico) es el admin: ve a todos los demas y es
+-- quien habilita el acceso. No hay flag para eso a proposito -- un flag se
+-- puede apagar sin querer y dejar el panel sin nadie que pueda encenderlo.
 CREATE TABLE IF NOT EXISTS users (
     id            SERIAL PRIMARY KEY,
     username      TEXT        NOT NULL,
     username_ci   TEXT        NOT NULL UNIQUE,   -- username en minusculas, para el login case-insensitive
     password_hash TEXT        NOT NULL,
     api_token     TEXT        NOT NULL UNIQUE,   -- lo que se pega en el script de cada cuenta
+    -- Sin esto el usuario entra al panel pero no ve el loader ni su token, y
+    -- /api/bot/* le rechaza los beats. Arranca apagado: registrarse no alcanza,
+    -- lo tiene que habilitar el admin. El admin siempre cuenta como aprobado.
+    approved      BOOLEAN     NOT NULL DEFAULT false,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -122,3 +129,11 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_job_id TEXT;
 -- primer beat de cada cuenta la llena y de paso pisa el total_honey inflado que
 -- dejo el modelo viejo (sumaba el total del juego entero en cada corrida).
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS honey_anchor BIGINT;
+
+-- Aprobacion. El DEFAULT true del ADD COLUMN es a proposito y corre UNA sola
+-- vez (despues el IF NOT EXISTS lo saltea): a los que ya estaban usando el
+-- panel no se les corta el acceso de golpe por un deploy. El SET DEFAULT de
+-- abajo deja el default real en false para los que se registren de ahora en
+-- mas, que es el punto de todo esto.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ALTER COLUMN approved SET DEFAULT false;

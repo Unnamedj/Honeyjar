@@ -45,15 +45,25 @@ authRouter.post("/register", async (req, res) => {
         });
     }
 
+    // El primer usuario del panel es el admin, y se aprueba solo: si tuviera
+    // que habilitarlo alguien, no habria nadie para hacerlo. Del segundo en
+    // adelante entran bloqueados y esperan a que el admin les de acceso.
     const user = await one(
-        `INSERT INTO users (username, username_ci, password_hash, api_token)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, username, api_token`,
+        `INSERT INTO users (username, username_ci, password_hash, api_token, approved)
+         VALUES ($1, $2, $3, $4, NOT EXISTS (SELECT 1 FROM users))
+         RETURNING id, username, api_token, approved`,
         [username, username.toLowerCase(), await hashPassword(password), newApiToken()]
     );
 
     issueSession(res, user);
-    res.json({ ok: true, user: { username: user.username, apiToken: user.api_token } });
+    res.json({
+        ok: true,
+        user: {
+            username: user.username,
+            apiToken: user.approved ? user.api_token : null,
+            approved: user.approved,
+        },
+    });
 });
 
 authRouter.post("/login", async (req, res) => {
@@ -61,7 +71,9 @@ authRouter.post("/login", async (req, res) => {
     const password = String(req.body?.password ?? "");
 
     const user = await one(
-        "SELECT id, username, password_hash, api_token FROM users WHERE username_ci = $1",
+        `SELECT id, username, password_hash, api_token,
+                (approved OR id = (SELECT min(id) FROM users)) AS approved
+           FROM users WHERE username_ci = $1`,
         [username.toLowerCase()]
     );
 
@@ -76,7 +88,14 @@ authRouter.post("/login", async (req, res) => {
     }
 
     issueSession(res, user);
-    res.json({ ok: true, user: { username: user.username, apiToken: user.api_token } });
+    res.json({
+        ok: true,
+        user: {
+            username: user.username,
+            apiToken: user.approved ? user.api_token : null,
+            approved: user.approved,
+        },
+    });
 });
 
 authRouter.post("/logout", (req, res) => {
@@ -85,18 +104,27 @@ authRouter.post("/logout", (req, res) => {
 });
 
 authRouter.get("/me", requireUser, (req, res) => {
+    const approved = req.user.approved || req.user.is_admin;
     res.json({
         ok: true,
         user: {
             username: req.user.username,
-            apiToken: req.user.api_token,
+            // Sin aprobacion el token ni siquiera viaja: el panel no puede
+            // mostrar un loader que no tiene. La puerta de verdad igual esta en
+            // /api/bot/* (aca abajo), no en esconder el string.
+            apiToken: approved ? req.user.api_token : null,
             createdAt: req.user.created_at,
+            approved,
+            admin: Boolean(req.user.is_admin),
         },
     });
 });
 
 /** Rotar el token invalida al instante todos los bots que usaban el viejo. */
 authRouter.post("/token/rotate", requireUser, async (req, res) => {
+    if (!req.user.approved && !req.user.is_admin) {
+        return res.status(403).json({ error: "cuenta_no_aprobada" });
+    }
     const token = newApiToken();
     await query("UPDATE users SET api_token = $1 WHERE id = $2", [token, req.user.id]);
     res.json({ ok: true, apiToken: token });

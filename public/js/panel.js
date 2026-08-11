@@ -10,6 +10,11 @@ const state = {
     tableView: false,
     token: null,
     lastOk: 0,
+    // Sesion: si es el primer usuario (admin) y si tiene el loader habilitado.
+    admin: false,
+    approved: false,
+    view: "dash",     // dash | admin
+    adminData: null,
 };
 
 // ── utilidades ────────────────────────────────────────────────
@@ -502,6 +507,140 @@ async function removeAccount(account) {
     load();
 }
 
+// ── admin: usuarios y acceso ──────────────────────────────────
+//
+// Solo lo ve el primer usuario que se registro. El server manda 403 a
+// /api/admin/* para cualquier otro, asi que esconder la pestana es comodidad,
+// no seguridad: aunque alguien la fuerce desde la consola no ve nada.
+
+async function loadAdmin() {
+    try {
+        const res = await fetch("/api/admin/overview");
+        if (!res.ok) return;
+        state.adminData = await res.json();
+        // Cuenta como latido: si no, el indicador de arriba se pone en "sin
+        // conexion" apenas la pestana de usuarios deja de pedir el overview.
+        state.lastOk = Date.now();
+        renderAdmin();
+    } catch {
+        // El tick siguiente reintenta; no vale la pena vaciar la tabla.
+    }
+}
+
+function renderAdmin() {
+    if (!state.adminData) return;
+    const { totals, users } = state.adminData;
+
+    $("admin-sub").textContent = totals.pending
+        ? `${totals.users} en total · ${totals.pending} esperando acceso`
+        : `${totals.users} en total · ninguno esperando`;
+
+    const tiles = [
+        ["Usuarios", totals.users, `${totals.approved} con acceso`],
+        ["Cuentas creadas", totals.accounts, "sumando todos"],
+        ["Reportando ahora", totals.online, `${totals.running} con el collector prendido`],
+        ["Honey del hub", fmt(totals.honey), "total de todas las cuentas"],
+    ];
+    $("admin-tiles").innerHTML = tiles
+        .map(
+            ([label, value, foot]) => `
+        <div class="tile">
+            <span class="tile__label">${label}</span>
+            <span class="tile__value num">${typeof value === "number" ? fmt(value) : value}</span>
+            <span class="tile__foot">${foot}</span>
+        </div>`
+        )
+        .join("");
+
+    $("admin-users").innerHTML = `
+        <table class="data">
+            <caption class="sr-only">Usuarios del hub y su acceso</caption>
+            <thead>
+                <tr>
+                    <th scope="col">Usuario</th>
+                    <th scope="col">Cuentas</th>
+                    <th scope="col">En vivo</th>
+                    <th scope="col">Corriendo</th>
+                    <th scope="col">Honey</th>
+                    <th scope="col">Última señal</th>
+                    <th scope="col">Acceso</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${users
+                    .map(
+                        (u) => `
+                    <tr>
+                        <td>
+                            ${escapeHtml(u.username)}
+                            ${u.admin ? '<span class="badge badge--good" style="margin-left:6px">admin</span>' : ""}
+                        </td>
+                        <td>${fmt(u.accounts)}</td>
+                        <td>${u.online ? fmt(u.online) : "—"}</td>
+                        <td>${u.running ? fmt(u.running) : "—"}</td>
+                        <td>${fmt(u.honey)}</td>
+                        <td>${ago(u.lastSeen)}</td>
+                        <td>${accessCell(u)}</td>
+                    </tr>`
+                    )
+                    .join("")}
+            </tbody>
+        </table>`;
+
+    for (const button of $("admin-users").querySelectorAll("[data-access]")) {
+        button.addEventListener("click", () =>
+            setAccess(Number(button.dataset.access), button.dataset.to === "on", button)
+        );
+    }
+}
+
+function accessCell(user) {
+    if (user.admin) return '<span class="muted">siempre</span>';
+    return user.approved
+        ? `<button class="btn btn--sm btn--danger" data-access="${user.id}" data-to="off">Quitar acceso</button>`
+        : `<button class="btn btn--sm btn--primary" data-access="${user.id}" data-to="on">Dar acceso</button>`;
+}
+
+async function setAccess(userId, approved, button) {
+    const previous = button.textContent;
+    button.disabled = true;
+    button.textContent = "…";
+    try {
+        const res = await fetch(`/api/admin/users/${userId}/access`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ approved }),
+        });
+        if (!res.ok) throw new Error("access");
+        await loadAdmin();
+    } catch {
+        button.textContent = "✕";
+        setTimeout(() => {
+            button.textContent = previous;
+            button.disabled = false;
+        }, 1200);
+    }
+}
+
+/**
+ * Las dos vistas comparten el <main>: cambiar de pestana esconde todo lo que no
+ * es de la vista activa. Al volver al panel se re-renderiza, porque el podio y
+ * el ranking deciden solos si se muestran o no.
+ */
+function setView(view) {
+    state.view = view;
+    for (const node of $("main").children) {
+        node.hidden = (node.id === "view-admin") !== (view === "admin");
+    }
+    for (const button of $("views").querySelectorAll("button")) {
+        button.setAttribute("aria-pressed", String(button.dataset.view === view));
+    }
+    $("connect-btn").hidden = view === "admin";
+
+    if (view === "admin") loadAdmin();
+    else if (state.data) render();
+}
+
 // ── modal de conexión ─────────────────────────────────────────
 
 function snippetFor(token) {
@@ -513,6 +652,9 @@ function snippetFor(token) {
 }
 
 function openConnectModal() {
+    // Sin acceso no hay token que mostrar: el server ni siquiera lo manda.
+    $("connect-open").hidden = !state.approved;
+    $("connect-locked").hidden = state.approved;
     $("token-value").textContent = state.token ?? "…";
     $("snippet").textContent = state.token ? snippetFor(state.token) : "…";
     $("connect-modal").hidden = false;
@@ -592,6 +734,10 @@ function wireControls() {
         $("table-toggle").setAttribute("aria-expanded", String(state.tableView));
     });
 
+    for (const button of $("views").querySelectorAll("button")) {
+        button.addEventListener("click", () => setView(button.dataset.view));
+    }
+
     $("logout-btn").addEventListener("click", async () => {
         await fetch("/api/auth/logout", { method: "POST" });
         location.replace("/");
@@ -612,18 +758,26 @@ async function boot() {
         location.replace("/");
         return;
     }
-    state.token = (await me.json()).user.apiToken;
+    const user = (await me.json()).user;
+    state.token = user.apiToken;
+    state.approved = Boolean(user.approved);
+    state.admin = Boolean(user.admin);
+
+    // La pestana de usuarios solo existe para el admin.
+    $("views").hidden = !state.admin;
 
     wireControls();
     wireModal();
     await load();
 
-    if (new URLSearchParams(location.search).get("welcome")) {
+    // Recien registrado: si todavia no tiene acceso, el modal explica que
+    // falta la aprobacion en vez de mostrarle un loader que no le va a andar.
+    if (new URLSearchParams(location.search).get("welcome") || !state.approved) {
         openConnectModal();
         history.replaceState(null, "", "/panel");
     }
 
-    setInterval(load, POLL_MS);
+    setInterval(() => (state.view === "admin" ? loadAdmin() : load()), POLL_MS);
     setInterval(markStale, POLL_MS);
 }
 

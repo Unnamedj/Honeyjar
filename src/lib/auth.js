@@ -29,10 +29,12 @@ export function newApiToken() {
 }
 
 /**
- * Resuelve al usuario a partir del api_token que pega el script. Lo comparten
- * las rutas del bot (/api/bot/*) y las del fetcher (/api/fetch/*): es la misma
- * credencial, y el GET del fetcher tambien acepta ?token= porque no todos los
- * ejecutores dejan mandar headers en un GET.
+ * Resuelve al usuario a partir del api_token que pega el script. El GET del
+ * fetcher tambien acepta ?token= porque no todos los ejecutores dejan mandar
+ * headers en un GET.
+ *
+ * Devuelve la fila con `approved` ya resuelto (el admin cuenta como aprobado
+ * siempre, aunque su fila diga lo contrario): quien llama decide si corta o no.
  */
 export async function resolveBotUser(req) {
     const header = req.get("authorization") ?? "";
@@ -40,7 +42,29 @@ export async function resolveBotUser(req) {
     const raw = bearer || req.body?.token || req.query?.token;
     const token = typeof raw === "string" ? raw.trim().slice(0, 80) : "";
     if (!token) return null;
-    return one("SELECT id FROM users WHERE api_token = $1", [token]);
+    return one(
+        `SELECT id, (approved OR id = (SELECT min(id) FROM users)) AS approved
+           FROM users WHERE api_token = $1`,
+        [token]
+    );
+}
+
+/**
+ * El admin es el primer usuario que se registro. Se calcula del min(id) en vez
+ * de guardarse en una columna: asi no hay forma de quedarse sin admin por
+ * apagar un flag, y el orden de registro no se puede falsificar desde la UI.
+ */
+export async function adminUserId() {
+    const row = await one("SELECT min(id)::int AS id FROM users");
+    return row?.id ?? null;
+}
+
+/** Exige sesion Y que sea el admin. Va despues de requireUser. */
+export async function requireAdmin(req, res, next) {
+    if (req.user?.id !== (await adminUserId())) {
+        return res.status(403).json({ error: "solo_admin" });
+    }
+    next();
 }
 
 export function issueSession(res, user) {
@@ -76,7 +100,9 @@ export async function requireUser(req, res, next) {
     }
 
     const user = await one(
-        "SELECT id, username, api_token, created_at FROM users WHERE id = $1",
+        `SELECT id, username, api_token, created_at, approved,
+                (id = (SELECT min(id) FROM users)) AS is_admin
+           FROM users WHERE id = $1`,
         [payload.uid]
     );
     if (!user) {

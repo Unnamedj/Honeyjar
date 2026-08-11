@@ -5,8 +5,9 @@ reportan a una misma pantalla: cuántos Honey Jars llevan en total, cuánto puso
 cada una, a qué ritmo van, cuántos hops hicieron, en qué server están — y desde
 ahí mismo las pausás, les cambiás el método o las hacés saltar de server.
 
-**Cada usuario ve solo lo suyo.** Te registrás, recibís un token propio, y las
-cuentas que usen ese token entran a *tu* panel. Dos personas pueden estar
+**Cada usuario ve solo lo suyo.** Te registrás, el admin te habilita, recibís un
+token propio, y las cuentas que usen ese token entran a *tu* panel. Dos personas
+pueden estar
 corriendo el mismo script (incluso con la misma cuenta de Roblox) y sus
 contadores no se tocan: la clave del sistema es `(usuario, cuenta de Roblox)`,
 nunca la cuenta sola.
@@ -24,6 +25,9 @@ nunca la cuenta sola.
   de las últimas 3 h, hops, uptime, hace cuánto agarró el último jar, server y
   jugadores, método y velocidad — más los botones de control.
 - **Ranking** con barras, y la misma tabla en versión texto.
+- **Pestaña Usuarios**, solo para el admin: quién se registró, cuántas cuentas
+  tiene cada uno, cuántas están reportando ahora mismo — y el botón que les
+  habilita o les corta el loader.
 
 ---
 
@@ -67,10 +71,31 @@ npm start                 # http://localhost:3000
 
 ---
 
+## Quién entra: el admin y el acceso
+
+El **primer usuario que se registra es el admin** del hub. No hay flag ni
+variable de entorno para eso: es el `id` más chico de la tabla, así que no se
+puede apagar sin querer ni falsificar desde la UI.
+
+Del segundo en adelante, registrarse **no alcanza**. Entran bloqueados: ven el
+panel, pero no su token ni el loader, y `/api/bot/*` les rechaza los beats con
+`403`. El admin tiene una pestaña **Usuarios** arriba a la derecha con cuántos
+usuarios hay, cuántas cuentas creó cada uno, cuántas están reportando y cuántas
+tienen el collector prendido — y el botón para darles o quitarles el acceso.
+
+Quitar el acceso corta al instante: el beat siguiente ya se rechaza, no hace
+falta esperar a que caduque ninguna sesión.
+
+Los usuarios que ya existían cuando se agregó todo esto quedan habilitados
+solos, para que un deploy no les corte los bots que están corriendo.
+
+---
+
 ## Conectar una cuenta
 
-En el panel, **＋ Conectar cuenta** te da el token y el snippet ya armado. Es
-una sola línea, en el ejecutor:
+En el panel, **＋ Conectar cuenta** te da el token y el snippet ya armado (si
+todavía no te habilitaron, ahí mismo dice que falta la aprobación). Es una sola
+línea, en el ejecutor:
 
 ```lua
 loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua"))(
@@ -188,6 +213,13 @@ Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
 | POST | `/api/accounts/:id/command` | `enabled` `method` `speed` `autohop` `smart` `hop` |
 | DELETE | `/api/accounts/:id` | Quitar una cuenta y su historial |
 
+### Admin (cookie de sesión, solo el primer usuario)
+
+| Método | Ruta | Para qué |
+|---|---|---|
+| GET | `/api/admin/overview` | Usuarios, cuentas por usuario, cuántas vivas y cuántas corriendo |
+| POST | `/api/admin/users/:id/access` | `{approved: true\|false}` — da o saca el acceso al loader |
+
 ---
 
 ## Seguridad
@@ -198,6 +230,10 @@ Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
   pertenencia de una cuenta se chequea dentro del `WHERE` de la propia consulta,
   así no hay ventana entre verificar y escribir.
 - Login con el mismo mensaje para usuario inexistente y contraseña incorrecta.
+- La aprobación se chequea en el server en cada request, no escondiendo botones:
+  sin acceso el token no viaja al panel y `/api/bot/*` contesta `403` aunque el
+  usuario se lo haya guardado de antes. `/api/admin/*` es solo del primer
+  usuario y devuelve `403` a cualquier otro, tenga o no la pestaña a la vista.
 - Todos los valores que llegan del bot se recortan y se acotan antes de tocar la
   base; los comandos pasan por una lista blanca con validador por tipo.
 - El token es lo único que separa un panel de otro: tratalo como una contraseña.
@@ -212,8 +248,9 @@ src/
   server.js          arranque, estáticos, manejo de errores
   db.js              pool de Postgres + migración al arrancar
   schema.sql         esquema, idempotente
-  lib/auth.js        bcrypt, JWT en cookie, requireUser
+  lib/auth.js        bcrypt, JWT en cookie, requireUser y requireAdmin
   lib/roblox.js      miniaturas de avatar con caché de 6 h
+  routes/admin.js    usuarios del hub y quién tiene acceso al loader
   routes/auth.js     registro, login, token
   routes/bot.js      ingesta de telemetría y entrega de comandos
   routes/dash.js     el overview que consume el panel

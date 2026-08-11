@@ -29,6 +29,11 @@
                 <span id="pulse-text">Conectando…</span>
             </span>
 
+            <div class="segmented" id="views" role="group" aria-label="Vista" hidden>
+                <button type="button" data-view="dash"  aria-pressed="true">Panel</button>
+                <button type="button" data-view="admin" aria-pressed="false">Usuarios</button>
+            </div>
+
             <button class="btn btn--primary btn--sm" id="connect-btn">＋ Conectar cuenta</button>
             <button class="btn btn--ghost btn--sm" id="logout-btn" title="Cerrar sesión">Salir</button>
         </header>
@@ -142,6 +147,28 @@
                     <div class="card__body table-wrap" id="table-view" hidden></div>
                 </div>
             </section>
+
+            <!-- ── Admin: usuarios y acceso (solo el primer usuario) ─────── -->
+            <section id="view-admin" hidden>
+                <div class="section-head">
+                    <h2>Usuarios del hub</h2>
+                    <span class="eyebrow" id="admin-sub">—</span>
+                </div>
+
+                <div class="kpis" id="admin-tiles"></div>
+
+                <div class="card" style="margin-top:16px">
+                    <div class="card__head">
+                        <div>
+                            <h2 class="card__title">Acceso al loader</h2>
+                            <span class="eyebrow">
+                                Sin acceso no ven su token ni pueden reportar al panel
+                            </span>
+                        </div>
+                    </div>
+                    <div class="card__body table-wrap" id="admin-users"></div>
+                </div>
+            </section>
         </main>
     </div>
 
@@ -154,6 +181,17 @@
                 <button class="btn btn--sm btn--ghost" id="connect-close" aria-label="Cerrar">✕</button>
             </div>
 
+            <div id="connect-locked" hidden>
+                <p class="muted" style="font-size:13px;margin:0 0 10px">
+                    Tu cuenta todavía <strong>no tiene acceso</strong>. El loader y tu token aparecen acá
+                    apenas el admin te habilite; hasta entonces el panel no acepta reportes de tus bots.
+                </p>
+                <p class="muted" style="font-size:12px;margin:0">
+                    Ya quedaste registrado: no hace falta que vuelvas a crear la cuenta.
+                </p>
+            </div>
+
+            <div id="connect-open">
             <p class="muted" style="font-size:13px;margin:0">
                 Este es <strong>tu</strong> token. Todas las cuentas de Roblox que lo usen reportan a este
                 panel y a ningún otro. No lo compartas con nadie que no quieras ver acá adentro.
@@ -185,6 +223,7 @@
                 <span class="muted" style="font-size:11px">
                     Genera uno nuevo e invalida el anterior. Vas a tener que actualizar todos los scripts.
                 </span>
+            </div>
             </div>
         </div>
     </div>

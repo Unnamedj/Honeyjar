@@ -58,6 +58,12 @@
 
 * { box-sizing: border-box; }
 
+/* El `display: none` que trae el atributo hidden viene de la hoja del
+   navegador, asi que CUALQUIER display de aca abajo le gana y el elemento
+   sigue en pantalla. Sin esta linea, esconder algo desde JS no hace nada en
+   todo lo que sea grid o flex (la hero, las pestanas, las secciones). */
+[hidden] { display: none !important; }
+
 html, body {
     margin: 0;
     padding: 0;

@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import express from "express";
 import { migrate, pool } from "./db.js";
 import { startFetcher, stopFetcher } from "./fetcher/pool.js";
+import { adminRouter } from "./routes/admin.js";
 import { authRouter } from "./routes/auth.js";
 import { botRouter } from "./routes/bot.js";
 import { dashRouter } from "./routes/dash.js";
@@ -26,6 +27,9 @@ app.use("/api/bot", botRouter);
 // sesion para TODO lo que le entra, y el fetcher se autentica con el api_token
 // del script, no con la cookie del panel.
 app.use("/api/fetch", fetchRouter);
+// Tambien antes que dashRouter, que se come todo /api: /api/admin tiene su
+// propio guardia (sesion + ser el primer usuario).
+app.use("/api/admin", adminRouter);
 app.use("/api", dashRouter);
 
 app.use(

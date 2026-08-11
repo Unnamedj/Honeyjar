@@ -28,8 +28,8 @@
             switchBtn: "Entrá",
             autocomplete: "new-password",
             tagline:
-                "Creá tu cuenta y vas a recibir un token propio. Todas las cuentas de Roblox que peguen " +
-                "ese token reportan a TU panel — nunca al de otro.",
+                "Creá tu cuenta y esperá a que el admin te habilite. Ahí te aparece tu token propio: " +
+                "todas las cuentas de Roblox que lo peguen reportan a TU panel — nunca al de otro.",
         },
     };
 

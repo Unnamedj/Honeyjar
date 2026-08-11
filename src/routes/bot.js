@@ -102,6 +102,7 @@ async function pendingCommands(accountId) {
 botRouter.post("/hello", async (req, res) => {
     const user = await resolveBotUser(req);
     if (!user) return res.status(401).json({ error: "token_invalido" });
+    if (!user.approved) return res.status(403).json({ error: "cuenta_no_aprobada" });
 
     const account = await upsertAccount(user.id, req.body?.roblox);
     if (!account) return res.status(400).json({ error: "roblox_id_faltante" });
@@ -147,6 +148,7 @@ botRouter.post("/hello", async (req, res) => {
 botRouter.post("/beat", async (req, res) => {
     const user = await resolveBotUser(req);
     if (!user) return res.status(401).json({ error: "token_invalido" });
+    if (!user.approved) return res.status(403).json({ error: "cuenta_no_aprobada" });
 
     const account = await upsertAccount(user.id, req.body?.roblox);
     if (!account) return res.status(400).json({ error: "roblox_id_faltante" });
@@ -273,6 +275,7 @@ botRouter.post("/beat", async (req, res) => {
 botRouter.post("/bye", async (req, res) => {
     const user = await resolveBotUser(req);
     if (!user) return res.status(401).json({ error: "token_invalido" });
+    if (!user.approved) return res.status(403).json({ error: "cuenta_no_aprobada" });
 
     const clientId = text(req.body?.client, 64);
     if (!clientId) return res.status(400).json({ error: "client_faltante" });
