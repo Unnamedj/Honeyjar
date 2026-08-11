@@ -85,6 +85,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     event_active   BOOLEAN     NOT NULL DEFAULT false,
     wait_event     BOOLEAN     NOT NULL DEFAULT false,
     anti_afk       BOOLEAN     NOT NULL DEFAULT false,
+    -- Orden de recoleccion: true = barrido planeado de una (un solo trazo),
+    -- false = la jarra mas cercana recalculada en cada paso.
+    sweep_route    BOOLEAN     NOT NULL DEFAULT true,
     job_id         TEXT,
     place_id       BIGINT,
     server_players INTEGER,
@@ -149,3 +152,4 @@ ALTER TABLE users ALTER COLUMN approved SET DEFAULT false;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS event_active BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS wait_event   BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS anti_afk     BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sweep_route  BOOLEAN NOT NULL DEFAULT true;

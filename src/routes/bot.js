@@ -230,6 +230,7 @@ botRouter.post("/beat", async (req, res) => {
                 event_active   = $14,
                 wait_event     = $15,
                 anti_afk       = $16,
+                sweep_route    = $17,
                 last_jar_at    = CASE WHEN $2 > 0 THEN now() ELSE last_jar_at END
           WHERE id = $1`,
         [
@@ -249,6 +250,7 @@ botRouter.post("/beat", async (req, res) => {
             Boolean(req.body?.event),
             Boolean(req.body?.waitEvent),
             Boolean(req.body?.antiAfk),
+            Boolean(req.body?.sweepRoute),
         ]
     );
 

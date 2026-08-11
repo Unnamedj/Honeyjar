@@ -95,6 +95,10 @@ local Config = {
     -- Velocidad de Carpet cuando Smart TP cae a Carpet (gancho en cooldown):
     -- configurable, se guarda y se lee igual que el resto de Config.
     SmartFallbackSpeed = 250,
+    -- Orden en que se visitan las jarras del lote (ver la tabla Route):
+    -- prendido = barrido angular planeado de una (un solo trazo), apagado =
+    -- la mas cercana recalculada en cada paso (el comportamiento historico).
+    SweepRoute = true,
     -- Esperar a que el evento Bee este activo antes de juntar o hopear.
     WaitEvent = true,
     -- Responder al aviso de inactividad de Roblox para no comerse el kick.
@@ -121,6 +125,7 @@ if readfile and isfile and isfile(CONFIG_FILE) then
             if type(Data.Enabled) == "boolean" then Config.Enabled = Data.Enabled end
             local FallbackSpeed = tonumber(Data.SmartFallbackSpeed)
             if FallbackSpeed then Config.SmartFallbackSpeed = math.clamp(FallbackSpeed, 50, 1000) end
+            if type(Data.SweepRoute) == "boolean" then Config.SweepRoute = Data.SweepRoute end
             if type(Data.WaitEvent) == "boolean" then Config.WaitEvent = Data.WaitEvent end
             if type(Data.AntiAfk) == "boolean" then Config.AntiAfk = Data.AntiAfk end
             if type(Data.Optimizer) == "boolean" then Config.Optimizer = Data.Optimizer end
@@ -140,6 +145,7 @@ local function SaveConfig()
             SmartTP = Config.SmartTP,
             Enabled = Config.Enabled,
             SmartFallbackSpeed = Config.SmartFallbackSpeed,
+            SweepRoute = Config.SweepRoute,
             WaitEvent = Config.WaitEvent,
             AntiAfk = Config.AntiAfk,
             Optimizer = Config.Optimizer,
@@ -1342,23 +1348,59 @@ local Running = false
 local EmptyScans = 0
 local EMPTY_SCANS_BEFORE_HOP = 6
 
--- ScanHoney recorre una tabla hash: el orden que devuelve no tiene relacion
--- con la posicion de las jarras. La version vieja elegia "la mas cercana a
--- donde estoy PARADO AHORA" en cada paso -- un greedy nearest-neighbor local
--- que arma zigzag: agarra la de al lado, despues la mejor opcion pasa a estar
--- del OTRO lado del grupo (porque la mas cercana de la anterior ya no es la
--- global), y el recorrido total termina siendo mas largo que si se hubiera
--- planeado una vez.
+-- ============================================================
+-- ORDEN DE RECOLECCION -- en que orden se visitan las jarras del lote
+-- ------------------------------------------------------------
+-- ScanHoney recorre una tabla hash: el orden que devuelve no tiene ninguna
+-- relacion con la posicion de las jarras, asi que hay que decidirlo aca. Hay
+-- dos estrategias y se elige con Config.SweepRoute, porque no siempre gana la
+-- misma: dependen de como quedan repartidas las jarras en el mapa.
 --
--- Esto ordena TODO el lote una sola vez, antes de arrancar a moverse:
--- barrido angular alrededor del centro del grupo (como las agujas del
--- reloj), rotado para arrancar en la jarra mas cercana al jugador. Un
--- barrido angular nunca cruza el centro dos veces, asi que no hay forma de
--- que el recorrido vuelva sobre sus pasos -- es basicamente un tour circular
--- por el perimetro del grupo, sin heuristica que recalcular en cada frame.
-local function OptimalCollectionRoute(List, FromPos)
-    local Positions = { }
-    local Valid = { }
+--   Nearest (el de siempre) -- en cada paso elige la mas cercana a donde
+--     estamos PARADOS AHORA. Reacciona a lo que aparece y a donde terminaste
+--     realmente parado, pero es un greedy local: agarra la de al lado, y
+--     despues la mejor opcion queda del otro lado del grupo. De ahi sale el
+--     zigzag, y el recorrido total termina mas largo que si se planeaba.
+--
+--   Sweep -- ordena TODO el lote una sola vez, antes de arrancar a moverse:
+--     barrido angular alrededor del centro del grupo (como las agujas del
+--     reloj), rotado para empezar por la jarra mas cercana al jugador. Un
+--     barrido angular nunca cruza el centro dos veces, asi que el recorrido
+--     no puede volver sobre sus pasos: queda un tour por el perimetro, un
+--     solo trazo. El costo es que el orden se fija al principio y no se
+--     reacomoda si aparece una jarra nueva a mitad del recorrido.
+--
+-- Van en una tabla y no como dos funciones sueltas por el limite de 200
+-- locales del chunk (ver el comentario de `Hop` arriba).
+-- ============================================================
+local Route = { }
+
+-- Devuelve el indice de la mas cercana a FromPos, limpiando de paso las que
+-- ya no existen. Lo llama el loop en CADA paso, por eso recalcula.
+function Route.Nearest(List, FromPos)
+    local BestIdx, BestDist
+    local I = 1
+    while I <= #List do
+        local Honey = List[I]
+        if not Honey.Parent then
+            table.remove(List, I)
+        else
+            local Pos = HoneyPosition(Honey)
+            if Pos then
+                local Dist = (Pos - FromPos).Magnitude
+                if not BestDist or Dist < BestDist then
+                    BestDist, BestIdx = Dist, I
+                end
+            end
+            I = I + 1
+        end
+    end
+    return BestIdx
+end
+
+-- Devuelve la lista entera ya ordenada. Se llama UNA vez por lote.
+function Route.Sweep(List, FromPos)
+    local Positions, Valid = { }, { }
     local CenterX, CenterY, CenterZ, Count = 0, 0, 0, 0
     for _, Honey in ipairs(List) do
         if Honey.Parent then
@@ -1371,23 +1413,29 @@ local function OptimalCollectionRoute(List, FromPos)
             end
         end
     end
-    if Count <= 2 then return Valid end
+    -- Con dos o menos no hay recorrido que optimizar, pero igual conviene
+    -- arrancar por la de al lado.
+    if Count <= 2 then
+        table.sort(Valid, function(A, B)
+            return (Positions[A] - FromPos).Magnitude < (Positions[B] - FromPos).Magnitude
+        end)
+        return Valid
+    end
 
     local Center = Vector3.new(CenterX / Count, CenterY / Count, CenterZ / Count)
 
     -- Angulo en el plano horizontal (X/Z): la altura no importa para decidir
-    -- el orden del barrido, solo para el trazado de ruta que ya hace BuildRoute.
+    -- el orden del barrido, solo para el trazado que ya hace BuildRoute.
     local WithAngle = { }
     for _, Honey in ipairs(Valid) do
-        local Pos = Positions[Honey]
-        local ToPos = Pos - Center
-        table.insert(WithAngle, { Honey = Honey, Angle = math.atan2(ToPos.Z, ToPos.X), Pos = Pos })
+        local ToPos = Positions[Honey] - Center
+        table.insert(WithAngle, { Honey = Honey, Angle = math.atan2(ToPos.Z, ToPos.X), Pos = Positions[Honey] })
     end
     table.sort(WithAngle, function(A, B) return A.Angle < B.Angle end)
 
-    -- Sin esto el barrido siempre arranca en el mismo punto del circulo
+    -- Sin esto el barrido siempre arrancaria en el mismo punto del circulo
     -- (angulo -pi) sin importar donde estemos parados, y el primer tramo
-    -- termina siendo el salto mas largo de todo el recorrido.
+    -- terminaria siendo el salto mas largo de todo el recorrido.
     local StartIdx, StartDist = 1, math.huge
     for I, Entry in ipairs(WithAngle) do
         local Dist = (Entry.Pos - FromPos).Magnitude
@@ -1418,24 +1466,36 @@ local function ProcessQueue()
                 task.wait(1)
             elseif #Honeys > 0 then
                 EmptyScans = 0
-                local Root = GetRoot()
-                if Root then
-                    -- Un solo calculo de orden para todo el lote (ver
-                    -- OptimalCollectionRoute): el zigzag anterior salia de
-                    -- recalcular "la mas cercana" en cada paso, que es un
-                    -- greedy local y no el recorrido mas corto global.
-                    Honeys = OptimalCollectionRoute(Honeys, Root.Position)
+                if Config.SweepRoute then
+                    -- Un solo calculo de orden para todo el lote: el recorrido
+                    -- queda como un trazo unico en vez de zigzag (ver Route).
+                    local Root = GetRoot()
+                    if Root then Honeys = Route.Sweep(Honeys, Root.Position) end
                     while #Honeys > 0 do
                         if not Config.Enabled or MyToken ~= G.__HoneyTPRun then break end
 
                         -- Puede haber desaparecido (otra cuenta la agarro)
-                        -- entre que se planeo el orden y que le toca el
-                        -- turno: se descarta sin gastar un TP en el vacio.
+                        -- entre que se planeo el orden y que le toca el turno:
+                        -- se descarta sin gastar un TP en el vacio.
                         local Honey = table.remove(Honeys, 1)
                         if Honey.Parent then
                             SetStatus(("Collecting (%d left)"):format(#Honeys), ON_COLOR)
                             CollectHoney(Honey)
                         end
+                    end
+                else
+                    while #Honeys > 0 do
+                        if not Config.Enabled or MyToken ~= G.__HoneyTPRun then break end
+
+                        local Root = GetRoot()
+                        if not Root then break end
+
+                        local Idx = Route.Nearest(Honeys, Root.Position)
+                        if not Idx then break end
+
+                        local Honey = table.remove(Honeys, Idx)
+                        SetStatus(("Collecting (%d left)"):format(#Honeys), ON_COLOR)
+                        CollectHoney(Honey)
                     end
                 end
             elseif Config.AutoHop then
@@ -1824,7 +1884,7 @@ SmartOverlay.Parent = ScreenGui
 local SmartPopup = Instance.new("Frame")
 SmartPopup.AnchorPoint = Vector2.new(0.5, 0.5)
 SmartPopup.Position = UDim2.fromScale(0.5, 0.5)
-SmartPopup.Size = UDim2.fromOffset(240, 236)
+SmartPopup.Size = UDim2.fromOffset(240, 312)
 SmartPopup.BackgroundColor3 = COLORS.bg
 SmartPopup.BorderSizePixel = 0
 SmartPopup.Active = true -- absorbe el click para que no cierre el popup por error
@@ -1895,8 +1955,45 @@ SmartCaption.Font = Enum.Font.Gotham
 SmartCaption.TextSize = 9
 SmartCaption.Parent = SmartPopup
 
+-- Selector de orden de recolección, dentro del mismo popover porque es la otra
+-- mitad de "como se mueve el collector": Smart TP elige COMO viajar a cada
+-- jarra, esto elige EN QUE ORDEN. Va en do..end y la funcion de pintado cuelga
+-- de Route para no sumar locales al chunk (tope de 200, ver `Hop`).
+do
+    local SweepLabel = Instance.new("TextLabel")
+    SweepLabel.Position = UDim2.fromOffset(16, 226)
+    SweepLabel.Size = UDim2.new(1, -32, 0, 14)
+    SweepLabel.BackgroundTransparency = 1
+    SweepLabel.Text = "COLLECT ORDER"
+    SweepLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SweepLabel.TextColor3 = COLORS.muted
+    SweepLabel.Font = Enum.Font.GothamBold
+    SweepLabel.TextSize = 10
+    SweepLabel.Parent = SmartPopup
+
+    local Track, Knob, Hit = MakeSwitchRow(SmartPopup, 244, 52, "Single sweep",
+        "Un solo recorrido planeado de una. Apagado: la mas cercana en cada paso (zigzag).")
+
+    function Route.Paint()
+        if Config.SweepRoute then
+            Tween(Track, 0.15, { BackgroundColor3 = COLORS.good })
+            Tween(Knob, 0.15, { Position = UDim2.fromOffset(25, 3) })
+        else
+            Tween(Track, 0.15, { BackgroundColor3 = COLORS.off })
+            Tween(Knob, 0.15, { Position = UDim2.fromOffset(3, 3) })
+        end
+    end
+
+    Hit.Activated:Connect(function()
+        Config.SweepRoute = not Config.SweepRoute
+        SaveConfig()
+        Route.Paint()
+    end)
+end
+
 local function PaintSmart()
     SmartCaption.Text = SmartCaptionText()
+    Route.Paint()
     SmartBtnState.TextColor3 = Config.SmartTP and COLORS.good or COLORS.muted
     SmartBtnState.Text = Config.SmartTP and "ON" or "OFF"
     SmartBtnStroke.Color = Config.SmartTP and COLORS.accent or COLORS.stroke
@@ -2916,6 +3013,7 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 speed      = Config.Speed,
                 autoHop    = Config.AutoHop,
                 smartTP    = Config.SmartTP,
+                sweepRoute = Config.SweepRoute,
                 enabled    = Config.Enabled,
                 -- El tracker del evento viaja con cada beat: es lo que le
                 -- permite al panel decir si una cuenta esta parada porque no
@@ -2963,6 +3061,11 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 Config.SmartTP = (Value == "on")
                 SaveConfig()
                 PaintSmart()
+
+            elseif Kind == "sweep" then
+                Config.SweepRoute = (Value == "on")
+                SaveConfig()
+                Route.Paint()
 
             elseif Kind == "waitevent" then
                 Config.WaitEvent = (Value == "on")

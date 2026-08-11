@@ -167,6 +167,37 @@ Cada beat lleva el estado al panel, así que la tarjeta de la cuenta dice
 *Waiting for event* en vez de un *Idle* que parecería un bot roto — y el KPI de
 arriba muestra cuántas cuentas están efectivamente en el evento.
 
+### El orden de recolección (Sweep vs Nearest)
+
+Las jarras salen de un escaneo del workspace, y ese escaneo devuelve una tabla
+hash: el orden que trae **no tiene ninguna relación con dónde están las jarras en
+el mapa**. Hay que decidirlo, y hay dos formas — se elige con el toggle
+**Single sweep**, dentro del popover de Smart TP (o con el comando `sweep` desde
+el panel).
+
+**Nearest** (el comportamiento histórico) elige, en cada paso, la jarra más
+cercana a donde estás parado *en ese momento*. Reacciona a lo que aparezca y a
+dónde terminaste realmente, pero es un *greedy* local: agarra la de al lado, y
+entonces la mejor opción siguiente queda del otro lado del grupo. De ahí sale el
+zigzag — el recorrido se parte en tramos sueltos y el total termina más largo
+que si se hubiera planeado.
+
+**Sweep** ordena el lote entero **una sola vez**, antes de moverse: un barrido
+angular alrededor del centro del grupo, rotado para empezar por la jarra más
+cercana. Un barrido angular nunca cruza el centro dos veces, así que el recorrido
+no puede volver sobre sus pasos: queda un tour por el perímetro, un solo trazo.
+Lo que se paga es que el orden queda fijo al principio y no se reacomoda si
+aparece una jarra nueva a mitad del recorrido (si desapareció porque otra cuenta
+la agarró, se descarta sin gastar el viaje).
+
+Los dos usan **el mismo motor de movimiento**: Sweep decide *en qué orden* se
+visitan, Smart TP decide *cómo* se viaja a cada una (gancho o carpet). Son
+independientes y se combinan.
+
+Viene en **Sweep** por defecto. Está como toggle justamente porque cuál gana
+depende de cómo queden repartidas las jarras en el mapa: si en algún server rinde
+mejor el viejo, se apaga y listo.
+
 ### Los hops
 
 No se cuentan en Lua: el teleport corta la ejecución antes de que el script
@@ -195,8 +226,8 @@ mismo contador que ve el jugador (`LeftBottom > LeftBottom > CurrencyHoney`),
 que es exactamente el que ya se reportaba al panel: la lectura vive en un solo
 lugar y la usan los dos, así no hay dos números distintos.
 
-El panel completo (método, velocidad, hop, Smart TP) **arranca minimizado** y
-queda detrás de la burbuja 🍯 de arriba.
+El panel completo (método, velocidad, hop, Smart TP y el orden de recolección)
+**arranca minimizado** y queda detrás de la burbuja 🍯 de arriba.
 
 **Anti-AFK** responde al `Idled` de Roblox con un click de `VirtualUser`: resetea
 el contador de inactividad sin tocar nada del juego.
@@ -272,7 +303,7 @@ Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
 | GET | `/api/auth/me` | Usuario y token |
 | POST | `/api/auth/token/rotate` | Token nuevo, el viejo muere |
 | GET | `/api/overview?range=6h\|24h\|7d&tz=<min>` | Todo lo que pinta el panel, incluido el estado del pool de servers |
-| POST | `/api/accounts/:id/command` | `enabled` `method` `speed` `autohop` `smart` `hop` `waitevent` `antiafk` `optimizer` |
+| POST | `/api/accounts/:id/command` | `enabled` `method` `speed` `autohop` `smart` `sweep` `hop` `waitevent` `antiafk` `optimizer` |
 | DELETE | `/api/accounts/:id` | Quitar una cuenta y su historial |
 
 ### Admin (cookie de sesión, solo el primer usuario)

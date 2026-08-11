@@ -409,6 +409,9 @@ function accountCard(a) {
             <div class="meta__row"><span class="meta__key">Speed</span><span class="meta__val num">${
                 a.speed ? `${a.speed}` : "—"
             }</span></div>
+            <div class="meta__row"><span class="meta__key">Order</span><span class="meta__val">${
+                a.sweepRoute ? "sweep" : "nearest"
+            }</span></div>
         </div>
 
         <div class="controls">
@@ -431,6 +434,9 @@ function accountCard(a) {
                     title="Method: Carpet" aria-label="Use Carpet method">Carpet</button>
             <button class="btn btn--sm ${a.smartTp ? "btn--on" : ""}" data-cmd="smart"
                     data-value="${a.smartTp ? "off" : "on"}" title="Smart TP">Smart TP</button>
+            <button class="btn btn--sm ${a.sweepRoute ? "btn--on" : ""}" data-cmd="sweep"
+                    data-value="${a.sweepRoute ? "off" : "on"}"
+                    title="Collect order: one planned sweep instead of re-picking the nearest jar each step">Sweep</button>
             <button class="btn btn--sm ${a.autoHop ? "btn--on" : ""}" data-cmd="autohop"
                     data-value="${a.autoHop ? "off" : "on"}" title="Auto Hop">Auto hop</button>
             <button class="btn btn--sm" data-cmd="hop" title="Hop server now">Hop now</button>
