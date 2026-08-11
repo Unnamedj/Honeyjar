@@ -6,3 +6,10 @@ npm-debug.log*
 
 # Bytecode que deja luac al validar los .lua de public/
 luac.out
+
+# Credenciales de proxy reales. NUNCA committear esto -- proxies.txt vivio
+# trackeado un tiempo con 10k lineas de usuario:password de Nettify, en un
+# repo publico. Si haces falta el modo archivo (ver .env.example / README),
+# el archivo tiene que existir en el filesystem del deploy SIN pasar por git
+# (Railway Volume, o subido a mano) -- nunca commiteado.
+proxies*.txt
