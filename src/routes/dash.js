@@ -20,6 +20,9 @@ const COMMANDS = {
     enabled: (v) => (v === "on" || v === "off" ? v : null),
     autohop: (v) => (v === "on" || v === "off" ? v : null),
     smart:   (v) => (v === "on" || v === "off" ? v : null),
+    waitevent: (v) => (v === "on" || v === "off" ? v : null),
+    antiafk:   (v) => (v === "on" || v === "off" ? v : null),
+    optimizer: (v) => (v === "on" || v === "off" ? v : null),
     method:  (v) => (v === "Grapple" || v === "Carpet" ? v : null),
     speed:   (v) => {
         const n = Math.floor(Number(v));
@@ -59,6 +62,9 @@ dashRouter.get("/overview", async (req, res) => {
                     s.auto_hop,
                     s.smart_tp,
                     s.enabled,
+                    s.event_active,
+                    s.wait_event,
+                    s.anti_afk,
                     s.job_id,
                     s.server_players,
                     s.started_at,
@@ -214,6 +220,9 @@ dashRouter.get("/overview", async (req, res) => {
     const [bestHour, longestSession] = best;
 
     const online = accounts.rows.filter((a) => a.online).length;
+    // Cuentas vivas que ademas estan en un server con el evento corriendo. Es
+    // el numero que dice si el equipo esta produciendo o solo esperando.
+    const inEvent = accounts.rows.filter((a) => a.online && a.event_active).length;
     const totalHoney = accounts.rows.reduce((n, a) => n + Number(a.total_honey), 0);
     const totalHops = accounts.rows.reduce((n, a) => n + Number(a.total_hops), 0);
 
@@ -240,6 +249,7 @@ dashRouter.get("/overview", async (req, res) => {
             hops: totalHops,
             accounts: accounts.rows.length,
             online,
+            inEvent,
             perHour: lastHour?.honey ?? 0,
             streak,
             bestHour: bestHour ? { hour: bestHour.hour, honey: bestHour.honey } : null,
@@ -270,6 +280,9 @@ dashRouter.get("/overview", async (req, res) => {
             autoHop: Boolean(a.auto_hop),
             smartTp: Boolean(a.smart_tp),
             enabled: Boolean(a.enabled),
+            eventActive: Boolean(a.event_active),
+            waitEvent: Boolean(a.wait_event),
+            antiAfk: Boolean(a.anti_afk),
             jobId: a.job_id,
             players: a.server_players,
             startedAt: a.started_at ? new Date(a.started_at).getTime() : null,

@@ -57,6 +57,9 @@ const STATUS = {
     hopping:    { tone: "serious",  label: "Hopping server" },
     stopped:    { tone: "muted",    label: "Stopped" },
     idle:       { tone: "muted",    label: "Idle" },
+    // Quieto a proposito: no hay evento Bee y el bot tiene puesto esperarlo.
+    // Va en warning y no en critical porque no es una falla.
+    waiting_event: { tone: "warning", label: "Waiting for event" },
 };
 
 const RING = {
@@ -123,6 +126,16 @@ function render() {
         ? `${totals.online} reporting now`
         : "none reporting";
     $("kpi-rate").textContent = fmt(totals.perHour);
+
+    // Cuantas cuentas vivas estan en un server con el evento corriendo. Si
+    // ninguna lo esta, el ritmo en cero no es un problema del bot.
+    const inEvent = totals.inEvent ?? 0;
+    $("kpi-event").textContent = totals.online ? `${inEvent}/${totals.online}` : "—";
+    $("kpi-event-foot").textContent = !totals.online
+        ? "no accounts live"
+        : inEvent
+            ? `${inEvent} collecting the event`
+            : "nobody in the event yet";
     $("kpi-hops").textContent = fmt(totals.hops);
     $("kpi-streak").textContent = totals.streak;
     $("kpi-streak-foot").textContent = totals.bestHour
@@ -386,6 +399,7 @@ function accountCard(a) {
             <div class="meta__row"><span class="meta__key">Hops</span><span class="meta__val num">${fmt(a.hops)}</span></div>
             <div class="meta__row"><span class="meta__key">Uptime</span><span class="meta__val">${uptime}</span></div>
             <div class="meta__row"><span class="meta__key">Last jar</span><span class="meta__val">${ago(a.lastJarAt)}</span></div>
+            <div class="meta__row"><span class="meta__key">Bee event</span><span class="meta__val">${eventCell(a)}</span></div>
             <div class="meta__row"><span class="meta__key">Server</span><span class="meta__val">${
                 a.jobId ? `${escapeHtml(a.jobId.slice(0, 8))}${a.players ? ` · ${a.players}p` : ""}` : "—"
             }</span></div>
@@ -420,12 +434,30 @@ function accountCard(a) {
             <button class="btn btn--sm ${a.autoHop ? "btn--on" : ""}" data-cmd="autohop"
                     data-value="${a.autoHop ? "off" : "on"}" title="Auto Hop">Auto hop</button>
             <button class="btn btn--sm" data-cmd="hop" title="Hop server now">Hop now</button>
+            <button class="btn btn--sm ${a.waitEvent ? "btn--on" : ""}" data-cmd="waitevent"
+                    data-value="${a.waitEvent ? "off" : "on"}"
+                    title="Hold collecting and hopping until the Bee event starts">Wait event</button>
+            <button class="btn btn--sm ${a.antiAfk ? "btn--on" : ""}" data-cmd="antiafk"
+                    data-value="${a.antiAfk ? "off" : "on"}" title="Anti-AFK">Anti-AFK</button>
             <button class="btn btn--sm ${selected ? "btn--on" : "btn--ghost"}" data-focus>
                 ${selected ? "On the chart" : "See curve"}
             </button>
             <button class="btn btn--sm btn--danger" data-remove title="Remove from panel">Remove</button>
         </div>
     </article>`;
+}
+
+/**
+ * Estado del evento en una cuenta. Se dice SIEMPRE con texto: "off" con el bot
+ * esperando y "off" con el bot juntando igual son dos situaciones distintas y
+ * el color solo no las separa.
+ */
+function eventCell(account) {
+    if (!account.online) return "—";
+    if (account.eventActive) return '<span class="ev ev--live">live</span>';
+    return account.waitEvent
+        ? '<span class="ev ev--hold">off · holding</span>'
+        : '<span class="ev">off</span>';
 }
 
 function renderRanking() {

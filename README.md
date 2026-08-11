@@ -29,6 +29,8 @@ castellano — son para quien lo mantiene, no para quien lo usa.
   de las últimas 3 h, hops, uptime, hace cuánto agarró el último jar, server y
   jugadores, método y velocidad — más los botones de control.
 - **Ranking** con barras, y la misma tabla en versión texto.
+- **KPI del evento Bee**: cuántas cuentas vivas están en un server con el evento
+  corriendo. Si ese número es 0, el ritmo en cero no es un problema del bot.
 - **Pestaña Users**, solo para el admin: quién se registró, cuántas cuentas
   tiene cada uno, cuántas están reportando ahora mismo — y el botón que les
   habilita o les corta el loader.
@@ -137,6 +139,34 @@ ya tenía antes de prender el bot. El juego lo muestra entero o abreviado
 se puede leer, no manda nada: el panel se queda con la última lectura buena en
 vez de pisar el total con un cero.
 
+### El evento Bee (y por qué el bot se queda quieto)
+
+Las jarras solo existen mientras corre el evento **Bee**. Sin evento, un bot con
+auto-hop se la pasa saltando de server en server sin juntar nada: gasta
+teleports, se come rate-limits y no suma un jar. Por eso el script trackea el
+evento y, con **Wait event** prendido (el default), **no junta ni hopea hasta
+que arranca**.
+
+Para saber si está corriendo mira tres cosas, en este orden:
+
+1. **`ReplicatedStorage.Controllers.EventController`**, que es de donde el juego
+   maneja los eventos: tiene la lista `ActiveEvents` replicada y expone
+   `:IsActive("Bee")`. Es la fuente buena. `require()` sobre un módulo que el
+   juego ya cargó devuelve la misma tabla cacheada, no lo vuelve a correr.
+2. **La colmena**: el evento prende `workspace.Beehive.Active.ActiveNeon`
+   (`Transparency` 0 al arrancar, 1 al cortar). Sirve tanto para decir que sí
+   como para decir que no, y no depende de ningún módulo.
+3. **Jarras en el mapa**: ver una es prueba de que el evento corre. No verlas no
+   prueba nada (pueden estar todas juntadas), así que esta señal solo confirma
+   el sí, nunca el no.
+
+Sin ninguna de las tres se asume apagado, que es el lado seguro: esperar de más
+cuesta menos que hopear en vacío.
+
+Cada beat lleva el estado al panel, así que la tarjeta de la cuenta dice
+*Waiting for event* en vez de un *Idle* que parecería un bot roto — y el KPI de
+arriba muestra cuántas cuentas están efectivamente en el evento.
+
 ### Los hops
 
 No se cuentan en Lua: el teleport corta la ejecución antes de que el script
@@ -155,6 +185,29 @@ sesión muere en cada teleport. Esa ganancia es la que llena las cubetas de 5
 minutos (`samples`), de donde salen el gráfico, el ritmo, la racha y la mejor
 hora del día. Si el número baja porque gastaste honey en el juego, se reancla y
 la ganancia de ese beat es 0: el gráfico nunca resta.
+
+### El HUD del juego
+
+Lo que se ve al entrar es un cartel chico en el medio, semitransparente: el
+**total de honey de la cuenta**, si el evento está corriendo, y tres
+interruptores — **Wait event**, **Anti-AFK** y **Boost FPS**. El total sale del
+mismo contador que ve el jugador (`LeftBottom > LeftBottom > CurrencyHoney`),
+que es exactamente el que ya se reportaba al panel: la lectura vive en un solo
+lugar y la usan los dos, así no hay dos números distintos.
+
+El panel completo (método, velocidad, hop, Smart TP) **arranca minimizado** y
+queda detrás de la burbuja 🍯 de arriba.
+
+**Anti-AFK** responde al `Idled` de Roblox con un click de `VirtualUser`: resetea
+el contador de inactividad sin tocar nada del juego.
+
+**Boost FPS** apaga partículas, humo, estelas, rayos y sombras del mapa para que
+varias cuentas entren en la misma máquina. Arranca **apagado** a propósito, y
+nunca toca tres cosas: lo que cuelga de una jarra (el claim depende del
+`ProximityPrompt` de la jarra, romperlo es dejar de recolectar), los personajes,
+y nada fuera de `workspace` — ahí vive la GUI. Tampoco apaga el render 3D: sin
+él los `ProximityPrompt` dejan de mostrarse y el juego deja de reclamar las
+jarras. Apagarlo deja de tocar lo nuevo; lo ya apagado vuelve con un rejoin.
 
 ### Los comandos
 
@@ -219,7 +272,7 @@ Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
 | GET | `/api/auth/me` | Usuario y token |
 | POST | `/api/auth/token/rotate` | Token nuevo, el viejo muere |
 | GET | `/api/overview?range=6h\|24h\|7d&tz=<min>` | Todo lo que pinta el panel, incluido el estado del pool de servers |
-| POST | `/api/accounts/:id/command` | `enabled` `method` `speed` `autohop` `smart` `hop` |
+| POST | `/api/accounts/:id/command` | `enabled` `method` `speed` `autohop` `smart` `hop` `waitevent` `antiafk` `optimizer` |
 | DELETE | `/api/accounts/:id` | Quitar una cuenta y su historial |
 
 ### Admin (cookie de sesión, solo el primer usuario)

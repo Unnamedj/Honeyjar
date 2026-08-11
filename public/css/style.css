@@ -314,6 +314,12 @@ h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -0.02em; }
     gap: 14px;
 }
 
+/* Los KPI de la hero son cinco desde que existe el del evento: con el minimo
+   de 150px el quinto se caia solo a una segunda fila. Solo se achica el minimo
+   de esta grilla -- la del pool de servers, que comparte clase, se queda con
+   el suyo porque sus pies de tile son textos largos. */
+.hero .kpis { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
+
 .tile {
     display: flex;
     flex-direction: column;
@@ -566,6 +572,12 @@ h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -0.02em; }
 .badge--serious  { color: #f5b394; border-color: rgba(236, 131, 90, 0.32); }
 .badge--critical { color: #ff9d9d; border-color: rgba(208, 59, 59, 0.35); }
 .badge--muted    { color: var(--ink-muted); }
+
+/* Estado del evento en la fila de la tarjeta. El color repite lo que dice el
+   texto ("live", "off", "off · holding"), nunca lo reemplaza. */
+.ev { color: var(--ink-muted); }
+.ev--live { color: #7ee07e; }
+.ev--hold { color: #ffd07a; }
 
 .meta {
     display: grid;

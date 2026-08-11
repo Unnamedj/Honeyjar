@@ -79,6 +79,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     auto_hop       BOOLEAN     NOT NULL DEFAULT false,
     smart_tp       BOOLEAN     NOT NULL DEFAULT false,
     enabled        BOOLEAN     NOT NULL DEFAULT false,
+    -- Estado del evento Bee visto por ESA cuenta, y si el bot esta configurado
+    -- para esperarlo. Van juntos a proposito: una cuenta quieta con
+    -- event_active=false y wait_event=true no esta rota, esta esperando.
+    event_active   BOOLEAN     NOT NULL DEFAULT false,
+    wait_event     BOOLEAN     NOT NULL DEFAULT false,
+    anti_afk       BOOLEAN     NOT NULL DEFAULT false,
     job_id         TEXT,
     place_id       BIGINT,
     server_players INTEGER,
@@ -137,3 +143,9 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS honey_anchor BIGINT;
 -- mas, que es el punto de todo esto.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ALTER COLUMN approved SET DEFAULT false;
+
+-- Tracker del evento. En las sesiones que ya existian arrancan en false y el
+-- primer beat del script las pone al dia.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS event_active BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS wait_event   BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS anti_afk     BOOLEAN NOT NULL DEFAULT false;

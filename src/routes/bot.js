@@ -6,7 +6,13 @@ import { avatarIsFresh, fetchAvatar } from "../lib/roblox.js";
 export const botRouter = Router();
 
 const BUCKET_MS = 5 * 60 * 1000;
-const STATUS_KINDS = new Set(["idle", "collecting", "waiting", "hopping", "stopped"]);
+const STATUS_KINDS = new Set([
+    "idle", "collecting", "waiting", "hopping", "stopped",
+    // El bot esta quieto A PROPOSITO: no hay evento Bee y tiene puesto
+    // esperarlo. Es un estado distinto de "waiting" (que es esperar jarras
+    // con el evento corriendo) porque en el panel se lee muy distinto.
+    "waiting_event",
+]);
 
 function beatInterval() {
     const raw = Number(process.env.BEAT_INTERVAL_MS);
@@ -221,6 +227,9 @@ botRouter.post("/beat", async (req, res) => {
                 job_id         = COALESCE($11, job_id),
                 place_id       = COALESCE($12, place_id),
                 server_players = COALESCE($13, server_players),
+                event_active   = $14,
+                wait_event     = $15,
+                anti_afk       = $16,
                 last_jar_at    = CASE WHEN $2 > 0 THEN now() ELSE last_jar_at END
           WHERE id = $1`,
         [
@@ -237,6 +246,9 @@ botRouter.post("/beat", async (req, res) => {
             jobId,
             clampInt(req.body?.placeId, 0, Number.MAX_SAFE_INTEGER, 0) || null,
             clampInt(req.body?.players, 0, 200, 0) || null,
+            Boolean(req.body?.event),
+            Boolean(req.body?.waitEvent),
+            Boolean(req.body?.antiAfk),
         ]
     );
 

@@ -69,6 +69,18 @@ HubToken   = tostring(HubToken or "")
 -- exactamente como antes: pagina games.roblox.com por su cuenta.
 local Hop = {}
 
+-- Tracker del evento Bee. Sin evento no hay jarras que juntar, asi que el
+-- collector no tiene por que estar escaneando ni gastando hops: con
+-- Config.WaitEvent prendido se queda quieto hasta que arranca. Se declara aca
+-- arriba porque el loop del collector -- que vive mucho antes que la GUI -- lo
+-- consulta; los metodos se asignan mas abajo, cuando ya existe ScanHoney.
+local Bee = { Active = false, Source = "-", CheckedAt = 0 }
+
+-- Optimizer (menos VFX = mas FPS con varias cuentas abiertas) y el HUD nuevo.
+-- Los dos se arman al final, con la GUI, pero se declaran aca por lo mismo.
+local Boost = {}
+local HUD = {}
+
 -- ============================================================
 -- CONFIG
 -- ============================================================
@@ -83,6 +95,13 @@ local Config = {
     -- Velocidad de Carpet cuando Smart TP cae a Carpet (gancho en cooldown):
     -- configurable, se guarda y se lee igual que el resto de Config.
     SmartFallbackSpeed = 250,
+    -- Esperar a que el evento Bee este activo antes de juntar o hopear.
+    WaitEvent = true,
+    -- Responder al aviso de inactividad de Roblox para no comerse el kick.
+    AntiAfk = true,
+    -- Apagar VFX del mapa para ganar FPS. Arranca apagado a proposito: toca
+    -- el juego de verdad y se prende cuando el usuario quiere, no de prepo.
+    Optimizer = false,
 }
 
 if readfile and isfile and isfile(CONFIG_FILE) then
@@ -102,6 +121,9 @@ if readfile and isfile and isfile(CONFIG_FILE) then
             if type(Data.Enabled) == "boolean" then Config.Enabled = Data.Enabled end
             local FallbackSpeed = tonumber(Data.SmartFallbackSpeed)
             if FallbackSpeed then Config.SmartFallbackSpeed = math.clamp(FallbackSpeed, 50, 1000) end
+            if type(Data.WaitEvent) == "boolean" then Config.WaitEvent = Data.WaitEvent end
+            if type(Data.AntiAfk) == "boolean" then Config.AntiAfk = Data.AntiAfk end
+            if type(Data.Optimizer) == "boolean" then Config.Optimizer = Data.Optimizer end
         end
     end)
 end
@@ -118,6 +140,9 @@ local function SaveConfig()
             SmartTP = Config.SmartTP,
             Enabled = Config.Enabled,
             SmartFallbackSpeed = Config.SmartFallbackSpeed,
+            WaitEvent = Config.WaitEvent,
+            AntiAfk = Config.AntiAfk,
+            Optimizer = Config.Optimizer,
         }))
     end)
 end
@@ -987,6 +1012,74 @@ local function ScanHoney()
     return Out
 end
 
+-- ============================================================
+-- EVENT TRACKER -- esta corriendo el evento Bee?
+-- ------------------------------------------------------------
+-- El juego arranca y corta los eventos desde
+-- ReplicatedStorage.Controllers.EventController: mantiene una lista
+-- ActiveEvents replicada y expone :IsActive(nombre). Esa es la fuente buena y
+-- la primera que se consulta -- require() sobre un ModuleScript que el juego ya
+-- cargo devuelve la MISMA tabla cacheada, no lo vuelve a correr.
+--
+-- Si por lo que sea no se puede leer (el juego movio el modulo, el ejecutor
+-- bloquea require), quedan dos senales de respaldo que salen del propio evento
+-- Bee, que se ven en el mapa y no dependen de ningun modulo:
+--
+--   · La colmena. El evento prende workspace.Beehive.Active.ActiveNeon
+--     (Transparency 0 al arrancar, 1 al cortar). Es un booleano de verdad:
+--     sirve tanto para decir que si como para decir que no.
+--   · Jarras en el mapa. Solo existen con el evento corriendo, asi que ver una
+--     es prueba de que esta activo -- pero NO verlas no prueba nada (pueden
+--     estar todas juntadas), por eso solo se usa para confirmar el si.
+--
+-- Sin ninguna de las tres, se asume apagado: es el lado seguro. Peor que
+-- esperar de mas es hopear en vacio, que es justo lo que esto viene a evitar.
+Bee.EVENT_NAME = "Bee"
+
+function Bee.Controller()
+    if Bee.__ctrl ~= nil then return Bee.__ctrl or nil end
+    local OK, Mod = pcall(function()
+        local Folder = ReplicatedStorage:FindFirstChild("Controllers")
+        local Module = Folder and Folder:FindFirstChild("EventController")
+        return Module and require(Module) or nil
+    end)
+    Bee.__ctrl = (OK and type(Mod) == "table" and Mod) or false
+    return Bee.__ctrl or nil
+end
+
+-- Cada fuente devuelve true, false o nil (= no se cuanto).
+function Bee.FromController()
+    local Ctrl = Bee.Controller()
+    if not Ctrl or type(Ctrl.IsActive) ~= "function" then return nil end
+    local OK, Active = pcall(function() return Ctrl:IsActive(Bee.EVENT_NAME) end)
+    if OK and type(Active) == "boolean" then return Active end
+    return nil
+end
+
+function Bee.FromHive()
+    local Hive = Workspace:FindFirstChild("Beehive")
+    local Active = Hive and Hive:FindFirstChild("Active")
+    local Neon = Active and Active:FindFirstChild("ActiveNeon")
+    if Neon and Neon:IsA("BasePart") then return Neon.Transparency < 0.5 end
+    return nil
+end
+
+function Bee.Refresh()
+    local Active, Source = Bee.FromController(), "EventController"
+    if Active == nil then Active, Source = Bee.FromHive(), "Beehive" end
+    if Active == nil then Active, Source = false, "sin senal" end
+    -- Una jarra en el mapa gana sobre cualquier "apagado": si hay que juntar,
+    -- se junta, aunque la senal de arriba diga otra cosa.
+    if not Active and #ScanHoney() > 0 then Active, Source = true, "jarras en el mapa" end
+    Bee.Active, Bee.Source, Bee.CheckedAt = Active, Source, os.clock()
+    return Active
+end
+
+-- Lo que mira el collector antes de moverse: con WaitEvent apagado nunca frena.
+function Bee.ShouldHold()
+    return Config.WaitEvent and not Bee.Active
+end
+
 local function HoneyPosition(Honey)
     local OK, Pos = pcall(function() return Honey:GetPivot().Position end)
     if OK then return Pos end
@@ -1230,6 +1323,9 @@ local HOP_RETRY_WAIT = 1.5
 -- reintenta la busqueda en vez de tirar un teleport a ciegas.
 local function HopToSmallServer()
     while Config.Enabled and Config.AutoHop and MyToken == G.__HoneyTPRun do
+        -- El evento se corto en mitad de la busqueda: volver arriba en vez de
+        -- seguir saltando de server en server sin nada que juntar.
+        if Bee.ShouldHold() then return end
         SetStatus("Looking for a small server...", Color3.fromRGB(255, 110, 110))
         local JobId, Origen = Hop.Pick()
         if JobId then
@@ -1281,7 +1377,14 @@ local function ProcessQueue()
         while Config.Enabled and MyToken == G.__HoneyTPRun do
             local Honeys = ScanHoney()
 
-            if #Honeys > 0 then
+            -- Sin evento no hay nada que juntar ni sentido en cambiar de
+            -- server: se espera y listo. El scan de arriba igual corre, y si
+            -- aparece una jarra Bee.Refresh la ve y suelta el freno solo.
+            if Bee.ShouldHold() then
+                EmptyScans = 0
+                SetStatus("Waiting for the Bee event...", MUTED)
+                task.wait(1)
+            elseif #Honeys > 0 then
                 EmptyScans = 0
                 while #Honeys > 0 do
                     if not Config.Enabled or MyToken ~= G.__HoneyTPRun then break end
@@ -1301,8 +1404,11 @@ local function ProcessQueue()
                 -- seguidos confirman que ya se recolecto todo lo que habia.
                 EmptyScans = EmptyScans + 1
                 if EmptyScans >= EMPTY_SCANS_BEFORE_HOP then
+                    -- Si teleporta, el script muere aca y no vuelve. Si vuelve
+                    -- es porque se apago el auto-hop o se corto el evento: el
+                    -- ciclo sigue desde cero en vez de cortar el collector.
                     HopToSmallServer()
-                    break
+                    EmptyScans = 0
                 end
                 SetStatus(("All collected, hop in %d/%d"):format(EmptyScans, EMPTY_SCANS_BEFORE_HOP), MUTED)
                 task.wait(0.5)
@@ -2306,6 +2412,17 @@ do
     ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(ApplyAutoScale)
     ApplyAutoScale()
     task.defer(ApplyAutoScale)
+
+    -- El HUD del medio se arma en su propio bloque (abajo) para no sumar
+    -- locales aca, pero necesita el mismo drag que el resto: se pasa por la
+    -- tabla, que no cuenta contra el limite de 200 del chunk.
+    HUD.Drag = MakeDraggable
+
+    -- El panel completo arranca SIEMPRE minimizado: lo que se ve al entrar es
+    -- el HUD del medio, y esto queda como burbuja arriba para abrirlo cuando
+    -- haga falta. Se la corre del centro para no taparlo.
+    SetMinimized(true)
+    RestoreButton.Position = ClampPosition(RestoreButton, UDim2.new(0.5, 0, 0, 74))
 end
 
 PaintMethods()
@@ -2318,6 +2435,321 @@ SyncSmartSpeedDisplay()
 -- Restaura el estado guardado (si Auto Collect quedo prendido la sesion
 -- pasada, arranca solo) sin re-guardar lo que se acaba de leer del archivo.
 SetState(Config.Enabled, false)
+
+-- ============================================================
+-- OPTIMIZER -- menos VFX, mas FPS
+-- ------------------------------------------------------------
+-- Con varias cuentas abiertas en la misma maquina lo que las frena no es el
+-- script sino el mapa: particulas, humo, rayos y sombras. Se apagan (Enabled =
+-- false, no Destroy) para poder volver atras sin rejoin.
+--
+-- Lo que NO se toca, nunca:
+--   · Nada colgado de una jarra. El claim depende del ProximityPrompt de la
+--     jarra y de que el cliente del juego la siga viendo; romper eso es dejar
+--     de recolectar, que es lo contrario de optimizar.
+--   · Los personajes, y todo lo que este fuera de workspace -- ahi vive
+--     nuestra GUI.
+-- Tampoco se apaga el render 3D: los ProximityPrompt dejan de mostrarse y con
+-- eso el juego deja de reclamar las jarras.
+Boost.KILL = {
+    ParticleEmitter = true, Trail = true, Smoke = true,
+    Fire = true, Sparkles = true, Beam = true,
+}
+
+function Boost.Allowed(Obj)
+    local Node = Obj.Parent
+    while Node do
+        if Node == Workspace then return true end
+        if IsHoney(Node) then return false end
+        if Node:IsA("Model") and Players:GetPlayerFromCharacter(Node) then return false end
+        Node = Node.Parent
+    end
+    return false
+end
+
+function Boost.Strip(Obj)
+    if not Boost.KILL[Obj.ClassName] then return end
+    if not Boost.Allowed(Obj) then return end
+    pcall(function() Obj.Enabled = false end)
+end
+
+function Boost.Apply()
+    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+    pcall(function()
+        local L = game:GetService("Lighting")
+        L.GlobalShadows = false
+        L.FogEnd = 1e6
+        for _, Fx in ipairs(L:GetChildren()) do
+            if Fx:IsA("PostEffect") then Fx.Enabled = false end
+        end
+    end)
+    pcall(function()
+        local T = Workspace:FindFirstChildOfClass("Terrain")
+        if T then
+            T.WaterWaveSize = 0
+            T.WaterWaveSpeed = 0
+            T.WaterReflectance = 0
+        end
+    end)
+    -- El barrido va de a tandas: GetDescendants sobre el mapa entero son
+    -- decenas de miles de objetos y hacerlo de un saque cuelga un frame.
+    local Done = 0
+    for _, Obj in ipairs(Workspace:GetDescendants()) do
+        if not Config.Optimizer then return end
+        Boost.Strip(Obj)
+        Done = Done + 1
+        if Done % 800 == 0 then task.wait() end
+    end
+end
+
+function Boost.Set(On, ShouldSave)
+    Config.Optimizer = On and true or false
+    if ShouldSave ~= false then SaveConfig() end
+    if Config.Optimizer then
+        if not Boost.Conn then
+            Boost.Conn = Workspace.DescendantAdded:Connect(function(Obj)
+                if Config.Optimizer then Boost.Strip(Obj) end
+            end)
+        end
+        task.spawn(Boost.Apply)
+    elseif Boost.Conn then
+        -- Apagarlo deja de tocar lo nuevo; lo ya apagado se queda asi hasta el
+        -- proximo rejoin. Se avisa en el subtitulo del chip.
+        Boost.Conn:Disconnect()
+        Boost.Conn = nil
+    end
+end
+
+-- ============================================================
+-- HUD -- el cartel del medio
+-- ------------------------------------------------------------
+-- Lo unico que se ve al entrar: el total de honey de la cuenta, si el evento
+-- esta corriendo, y los tres interruptores que importan cuando el bot queda
+-- solo. El panel completo (metodo, velocidad, hop) sigue existiendo detras de
+-- la burbuja de arriba.
+--
+-- El total sale del MISMO contador que ve el jugador (LeftBottom > LeftBottom >
+-- CurrencyHoney), que es el que ya usaba el reporte al panel -- ahora la
+-- lectura vive aca y la usan los dos, asi no hay dos numeros distintos.
+function HUD.ResolveLabel()
+    if HUD.Label and HUD.Label.Parent then return HUD.Label end
+    local OK, Found = pcall(function()
+        return PlayerGui.LeftBottom.LeftBottom.CurrencyHoney
+    end)
+    if OK and typeof(Found) == "Instance" then HUD.Label = Found end
+    return HUD.Label
+end
+
+-- El label puede venir abreviado ("12.4K", "1.2M") o con separadores
+-- ("12,430"). Borrarle todo lo que no sea digito rompe las dos formas: "12.4K"
+-- quedaria en 124 y "1.2M" en 12.
+HUD.UNITS = { k = 1e3, m = 1e6, b = 1e9, t = 1e12 }
+
+function HUD.ParseAmount(Text)
+    local Clean = tostring(Text or ""):gsub("[%s,]", "")
+    local Num, Unit = Clean:match("(%d+%.?%d*)(%a?)")
+    local N = tonumber(Num)
+    if not N then return nil end
+    return math.floor(N * (HUD.UNITS[Unit:lower()] or 1))
+end
+
+-- Devuelve nil si no se pudo leer, NO un contador propio: el panel guarda esto
+-- pisando el total anterior, y mandarle un numero de otra magnitud le borraria
+-- el honey a la cuenta.
+function HUD.ReadHoney()
+    local Label = HUD.ResolveLabel()
+    if not Label then return nil end
+    local OK, Text = pcall(function() return Label.Text end)
+    if not OK then return nil end
+    return HUD.ParseAmount(Text)
+end
+
+function HUD.Comma(N)
+    local Out = tostring(math.floor(N or 0))
+    local Count
+    repeat
+        Out, Count = Out:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+    until Count == 0
+    return Out
+end
+
+do
+    local Card = Instance.new("Frame")
+    Card.Name = "HoneyHUD"
+    Card.AnchorPoint = Vector2.new(0.5, 0.5)
+    Card.Position = UDim2.fromScale(0.5, 0.5)
+    Card.Size = UDim2.fromOffset(258, 168)
+    Card.BackgroundColor3 = Color3.fromRGB(24, 18, 8)
+    Card.BackgroundTransparency = 0.28
+    Card.BorderSizePixel = 0
+    Card.Active = true
+    Card.ZIndex = 2
+    Card.Parent = ScreenGui
+    Corner(Card, 18)
+    Stroke(Card, COLORS.accent, 0.45, 1.4)
+    HUD.Frame = Card
+
+    local Eyebrow = Instance.new("TextLabel")
+    Eyebrow.Position = UDim2.fromOffset(18, 15)
+    Eyebrow.Size = UDim2.new(1, -36, 0, 12)
+    Eyebrow.BackgroundTransparency = 1
+    Eyebrow.Text = "HONEY JARS"
+    Eyebrow.TextXAlignment = Enum.TextXAlignment.Left
+    Eyebrow.TextColor3 = COLORS.accent
+    Eyebrow.TextTransparency = 0.25
+    Eyebrow.Font = Enum.Font.GothamBold
+    Eyebrow.TextSize = 10
+    Eyebrow.ZIndex = 3
+    Eyebrow.Parent = Card
+
+    local Value = Instance.new("TextLabel")
+    Value.Position = UDim2.fromOffset(18, 29)
+    Value.Size = UDim2.new(1, -36, 0, 42)
+    Value.BackgroundTransparency = 1
+    Value.Text = "-"
+    Value.TextXAlignment = Enum.TextXAlignment.Left
+    Value.TextColor3 = COLORS.accent2
+    Value.Font = Enum.Font.GothamBold
+    Value.TextSize = 34
+    Value.ZIndex = 3
+    Value.Parent = Card
+    HUD.Value = Value
+
+    local Dot = Instance.new("Frame")
+    Dot.Position = UDim2.fromOffset(19, 82)
+    Dot.Size = UDim2.fromOffset(7, 7)
+    Dot.BackgroundColor3 = COLORS.off
+    Dot.BorderSizePixel = 0
+    Dot.ZIndex = 3
+    Dot.Parent = Card
+    Corner(Dot, 99)
+    HUD.Dot = Dot
+
+    local EventText = Instance.new("TextLabel")
+    EventText.Position = UDim2.fromOffset(32, 76)
+    EventText.Size = UDim2.new(1, -50, 0, 18)
+    EventText.BackgroundTransparency = 1
+    EventText.Text = "Checking event..."
+    EventText.TextXAlignment = Enum.TextXAlignment.Left
+    EventText.TextColor3 = COLORS.muted
+    EventText.Font = Enum.Font.GothamMedium
+    EventText.TextSize = 11
+    EventText.ZIndex = 3
+    EventText.Parent = Card
+    HUD.EventText = EventText
+
+    -- Tres chips: lo que uno quiere poder tocar sin abrir el panel entero.
+    HUD.Chips = {}
+    local Specs = {
+        {key = "WaitEvent", label = "WAIT EVENT"},
+        {key = "AntiAfk",   label = "ANTI-AFK"},
+        {key = "Optimizer", label = "BOOST FPS"},
+    }
+    for Index, Spec in ipairs(Specs) do
+        local Chip = Instance.new("TextButton")
+        Chip.Position = UDim2.fromOffset(18 + (Index - 1) * 76, 104)
+        Chip.Size = UDim2.fromOffset(68, 30)
+        Chip.BackgroundColor3 = COLORS.button
+        Chip.BackgroundTransparency = 0.2
+        Chip.BorderSizePixel = 0
+        Chip.AutoButtonColor = false
+        Chip.Text = Spec.label
+        Chip.TextColor3 = COLORS.muted
+        Chip.Font = Enum.Font.GothamBold
+        Chip.TextSize = 8
+        Chip.ZIndex = 3
+        Chip.Parent = Card
+        Corner(Chip, 9)
+        local Edge = Stroke(Chip, COLORS.stroke, 0.4, 1)
+
+        HUD.Chips[Spec.key] = {Button = Chip, Stroke = Edge}
+        Chip.Activated:Connect(function()
+            if Spec.key == "Optimizer" then
+                Boost.Set(not Config.Optimizer)
+            else
+                Config[Spec.key] = not Config[Spec.key]
+                SaveConfig()
+            end
+            HUD.Sync()
+        end)
+    end
+
+    local Hint = Instance.new("TextLabel")
+    Hint.Position = UDim2.fromOffset(18, 140)
+    Hint.Size = UDim2.new(1, -36, 0, 14)
+    Hint.BackgroundTransparency = 1
+    Hint.Text = "Tap the 🍯 bubble for speed, method and hop"
+    Hint.TextXAlignment = Enum.TextXAlignment.Left
+    Hint.TextColor3 = COLORS.muted
+    Hint.TextTransparency = 0.35
+    Hint.Font = Enum.Font.Gotham
+    Hint.TextSize = 9
+    Hint.ZIndex = 3
+    Hint.Parent = Card
+
+    if HUD.Drag then HUD.Drag(Card, Card) end
+end
+
+function HUD.Sync()
+    local Honey = HUD.ReadHoney()
+    HUD.Value.Text = Honey and HUD.Comma(Honey) or "-"
+
+    -- El texto dice el estado completo, el color solo lo repite: el evento
+    -- puede estar apagado y el bot igual seguir juntando si WaitEvent no esta.
+    local Live = Bee.Active
+    HUD.Dot.BackgroundColor3 = Live and COLORS.good or COLORS.bad
+    if Live then
+        HUD.EventText.Text = "Bee event live"
+        HUD.EventText.TextColor3 = COLORS.good
+    elseif Config.WaitEvent then
+        HUD.EventText.Text = "No event — holding"
+        HUD.EventText.TextColor3 = COLORS.bad
+    else
+        HUD.EventText.Text = "No event — running anyway"
+        HUD.EventText.TextColor3 = COLORS.muted
+    end
+
+    for Key, Chip in pairs(HUD.Chips) do
+        local On = Config[Key] and true or false
+        Chip.Button.TextColor3 = On and COLORS.accent or COLORS.muted
+        Chip.Stroke.Color = On and COLORS.accent or COLORS.stroke
+        Chip.Stroke.Transparency = On and 0.3 or 0.5
+        Chip.Button.BackgroundTransparency = On and 0.05 or 0.35
+    end
+end
+
+-- ============================================================
+-- ANTI-AFK
+-- ------------------------------------------------------------
+-- Roblox avisa con Idled antes de tirar por inactividad. Un click con
+-- VirtualUser alcanza para resetear el contador y no toca nada del juego.
+do
+    local Virtual
+    pcall(function() Virtual = game:GetService("VirtualUser") end)
+    if Virtual then
+        LocalPlayer.Idled:Connect(function()
+            if not Config.AntiAfk or MyToken ~= G.__HoneyTPRun then return end
+            pcall(function()
+                Virtual:CaptureController()
+                Virtual:ClickButton2(Vector2.new())
+            end)
+        end)
+    else
+        warn("[HONEY TP] anti-afk: your executor does not expose VirtualUser")
+    end
+end
+
+-- Un solo loop mantiene al dia el tracker y el HUD.
+task.spawn(function()
+    while MyToken == G.__HoneyTPRun do
+        pcall(Bee.Refresh)
+        pcall(HUD.Sync)
+        task.wait(1)
+    end
+end)
+
+if Config.Optimizer then Boost.Set(true, false) end
+HUD.Sync()
 
 print(("[HONEY TP] method: %s | speed: %d | autohop: %s | smart: %s"):format(
     Config.Method, Config.Speed, tostring(Config.AutoHop), tostring(Config.SmartTP)))
@@ -2382,56 +2814,15 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
     if not HubHttpPost then
         warn("[HONEY TP] Hub: your executor does not expose request/http_request -- cannot report")
     else
-        -- El total real ya lo muestra el propio juego en su GUI (LeftBottom >
-        -- LeftBottom > CurrencyHoney). Leerlo de ahi es mas simple y mas fiel
-        -- que llevar un contador aparte: no hace falta escuchar ningun remote,
-        -- solo mirar el mismo texto que ve el jugador en pantalla.
-        local HubHoneyLabel
-
-        local function HubResolveHoneyLabel()
-            if HubHoneyLabel and HubHoneyLabel.Parent then return HubHoneyLabel end
-            local ok, label = pcall(function()
-                return PlayerGui.LeftBottom.LeftBottom.CurrencyHoney
-            end)
-            if ok and typeof(label) == "Instance" then
-                HubHoneyLabel = label
-            end
-            return HubHoneyLabel
-        end
-
-        -- El label puede venir abreviado ("12.4K", "1.2M") o con separadores
-        -- ("12,430"). Borrarle todo lo que no sea digito rompe las dos formas:
-        -- "12.4K" quedaria en 124 y "1.2M" en 12 -- numeros que despues el
-        -- panel lee como si la cuenta hubiera perdido casi todo su honey.
-        local HUB_UNITS = { k = 1e3, m = 1e6, b = 1e9, t = 1e12 }
-
-        local function HubParseAmount(Text)
-            local Clean = tostring(Text or ""):gsub("[%s,]", "")
-            local Num, Unit = Clean:match("(%d+%.?%d*)(%a?)")
-            local N = tonumber(Num)
-            if not N then return nil end
-            return math.floor(N * (HUB_UNITS[Unit:lower()] or 1))
-        end
-
-        -- Devuelve nil si el label no se pudo leer, NO un contador propio: lo
-        -- que se reporta es el total de la cuenta en el juego, y el panel lo
-        -- guarda pisando el valor anterior. Mandar ahi los jars de esta corrida
-        -- (un numero chico, de otra magnitud) le borraria el total a la cuenta.
-        -- Sin lectura, el panel se queda con la ultima buena.
-        local function HubReadHoney()
-            local Label = HubResolveHoneyLabel()
-            if not Label then return nil end
-            local ok, Text = pcall(function() return Label.Text end)
-            if not ok then return nil end
-            return HubParseAmount(Text)
-        end
-
         -- Envuelve SetStatus (ya existe, la GUI lo llama todo el tiempo) para
         -- que el panel muestre el MISMO texto que ve el usuario en el juego.
         local HubStatusText, HubStatusKind = "Idle", "idle"
         local function HubClassifyStatus(Text)
             local Lower = tostring(Text):lower()
             if Lower:find("collecting") then return "collecting" end
+            -- Antes que "hop" y que "waiting": el texto del freno por evento
+            -- contiene las dos palabras y se leeria como otra cosa.
+            if Lower:find("bee event") then return "waiting_event" end
             if Lower:find("hop") or Lower:find("small server") then return "hopping" end
             if Lower:find("waiting") then return "waiting" end
             if Lower:find("stopped") then return "stopped" end
@@ -2479,7 +2870,7 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                     name    = LocalPlayer.Name,
                     display = LocalPlayer.DisplayName,
                 },
-                honey      = HubReadHoney(),
+                honey      = HUD.ReadHoney(),
                 status     = HubStatusText,
                 statusKind = HubStatusKind,
                 method     = Config.Method,
@@ -2487,6 +2878,13 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 autoHop    = Config.AutoHop,
                 smartTP    = Config.SmartTP,
                 enabled    = Config.Enabled,
+                -- El tracker del evento viaja con cada beat: es lo que le
+                -- permite al panel decir si una cuenta esta parada porque no
+                -- hay evento o porque algo se rompio.
+                event      = Bee.Active,
+                waitEvent  = Config.WaitEvent,
+                antiAfk    = Config.AntiAfk,
+                optimizer  = Config.Optimizer,
                 jobId      = game.JobId,
                 placeId    = game.PlaceId,
                 players    = #Players:GetPlayers(),
@@ -2526,6 +2924,20 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 Config.SmartTP = (Value == "on")
                 SaveConfig()
                 PaintSmart()
+
+            elseif Kind == "waitevent" then
+                Config.WaitEvent = (Value == "on")
+                SaveConfig()
+                HUD.Sync()
+
+            elseif Kind == "antiafk" then
+                Config.AntiAfk = (Value == "on")
+                SaveConfig()
+                HUD.Sync()
+
+            elseif Kind == "optimizer" then
+                Boost.Set(Value == "on")
+                HUD.Sync()
 
             elseif Kind == "hop" then
                 -- HopToSmallServer loopea mientras AutoHop este prendido; para un
