@@ -1343,31 +1343,63 @@ local EmptyScans = 0
 local EMPTY_SCANS_BEFORE_HOP = 6
 
 -- ScanHoney recorre una tabla hash: el orden que devuelve no tiene relacion
--- con la posicion de las jarras, asi que sin esto el collector saltaba de un
--- lado al otro del mapa en vez de hacer un solo recorrido fluido. Aca se
--- elige siempre la mas cercana a la posicion ACTUAL (no a la de arranque del
--- scan), recalculando en cada paso, para que la ruta completa quede como una
--- sola linea continua.
-local function ClosestHoneyIndex(List, FromPos)
-    local BestIdx, BestDist
-    local i = 1
-    while i <= #List do
-        local Honey = List[i]
-        if not Honey.Parent then
-            table.remove(List, i)
-        else
+-- con la posicion de las jarras. La version vieja elegia "la mas cercana a
+-- donde estoy PARADO AHORA" en cada paso -- un greedy nearest-neighbor local
+-- que arma zigzag: agarra la de al lado, despues la mejor opcion pasa a estar
+-- del OTRO lado del grupo (porque la mas cercana de la anterior ya no es la
+-- global), y el recorrido total termina siendo mas largo que si se hubiera
+-- planeado una vez.
+--
+-- Esto ordena TODO el lote una sola vez, antes de arrancar a moverse:
+-- barrido angular alrededor del centro del grupo (como las agujas del
+-- reloj), rotado para arrancar en la jarra mas cercana al jugador. Un
+-- barrido angular nunca cruza el centro dos veces, asi que no hay forma de
+-- que el recorrido vuelva sobre sus pasos -- es basicamente un tour circular
+-- por el perimetro del grupo, sin heuristica que recalcular en cada frame.
+local function OptimalCollectionRoute(List, FromPos)
+    local Positions = { }
+    local Valid = { }
+    local CenterX, CenterY, CenterZ, Count = 0, 0, 0, 0
+    for _, Honey in ipairs(List) do
+        if Honey.Parent then
             local Pos = HoneyPosition(Honey)
             if Pos then
-                local Dist = (Pos - FromPos).Magnitude
-                if not BestDist or Dist < BestDist then
-                    BestDist = Dist
-                    BestIdx = i
-                end
+                Positions[Honey] = Pos
+                table.insert(Valid, Honey)
+                CenterX, CenterY, CenterZ = CenterX + Pos.X, CenterY + Pos.Y, CenterZ + Pos.Z
+                Count = Count + 1
             end
-            i = i + 1
         end
     end
-    return BestIdx
+    if Count <= 2 then return Valid end
+
+    local Center = Vector3.new(CenterX / Count, CenterY / Count, CenterZ / Count)
+
+    -- Angulo en el plano horizontal (X/Z): la altura no importa para decidir
+    -- el orden del barrido, solo para el trazado de ruta que ya hace BuildRoute.
+    local WithAngle = { }
+    for _, Honey in ipairs(Valid) do
+        local Pos = Positions[Honey]
+        local ToPos = Pos - Center
+        table.insert(WithAngle, { Honey = Honey, Angle = math.atan2(ToPos.Z, ToPos.X), Pos = Pos })
+    end
+    table.sort(WithAngle, function(A, B) return A.Angle < B.Angle end)
+
+    -- Sin esto el barrido siempre arranca en el mismo punto del circulo
+    -- (angulo -pi) sin importar donde estemos parados, y el primer tramo
+    -- termina siendo el salto mas largo de todo el recorrido.
+    local StartIdx, StartDist = 1, math.huge
+    for I, Entry in ipairs(WithAngle) do
+        local Dist = (Entry.Pos - FromPos).Magnitude
+        if Dist < StartDist then StartDist, StartIdx = Dist, I end
+    end
+
+    local N = #WithAngle
+    local Out = { }
+    for I = 0, N - 1 do
+        Out[I + 1] = WithAngle[((StartIdx - 1 + I) % N) + 1].Honey
+    end
+    return Out
 end
 
 local function ProcessQueue()
@@ -1386,18 +1418,25 @@ local function ProcessQueue()
                 task.wait(1)
             elseif #Honeys > 0 then
                 EmptyScans = 0
-                while #Honeys > 0 do
-                    if not Config.Enabled or MyToken ~= G.__HoneyTPRun then break end
+                local Root = GetRoot()
+                if Root then
+                    -- Un solo calculo de orden para todo el lote (ver
+                    -- OptimalCollectionRoute): el zigzag anterior salia de
+                    -- recalcular "la mas cercana" en cada paso, que es un
+                    -- greedy local y no el recorrido mas corto global.
+                    Honeys = OptimalCollectionRoute(Honeys, Root.Position)
+                    while #Honeys > 0 do
+                        if not Config.Enabled or MyToken ~= G.__HoneyTPRun then break end
 
-                    local Root = GetRoot()
-                    if not Root then break end
-
-                    local Idx = ClosestHoneyIndex(Honeys, Root.Position)
-                    if not Idx then break end
-
-                    local Honey = table.remove(Honeys, Idx)
-                    SetStatus(("Collecting (%d left)"):format(#Honeys), ON_COLOR)
-                    CollectHoney(Honey)
+                        -- Puede haber desaparecido (otra cuenta la agarro)
+                        -- entre que se planeo el orden y que le toca el
+                        -- turno: se descarta sin gastar un TP en el vacio.
+                        local Honey = table.remove(Honeys, 1)
+                        if Honey.Parent then
+                            SetStatus(("Collecting (%d left)"):format(#Honeys), ON_COLOR)
+                            CollectHoney(Honey)
+                        end
+                    end
                 end
             elseif Config.AutoHop then
                 -- Un scan vacio puede ser el mapa todavia cargando; varios
