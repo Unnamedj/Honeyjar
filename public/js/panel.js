@@ -352,7 +352,7 @@ function accountCard(a) {
 
         <div>
             <div class="account__honey num">
-                ${fmt(a.honey)} <small>jars en total</small>
+                ${fmt(a.honey)} <small>honey en el juego</small>
             </div>
             <div class="tile__spark" data-spark></div>
             <div class="muted" style="font-size:11px">

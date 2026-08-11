@@ -2399,14 +2399,31 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
             return HubHoneyLabel
         end
 
+        -- El label puede venir abreviado ("12.4K", "1.2M") o con separadores
+        -- ("12,430"). Borrarle todo lo que no sea digito rompe las dos formas:
+        -- "12.4K" quedaria en 124 y "1.2M" en 12 -- numeros que despues el
+        -- panel lee como si la cuenta hubiera perdido casi todo su honey.
+        local HUB_UNITS = { k = 1e3, m = 1e6, b = 1e9, t = 1e12 }
+
+        local function HubParseAmount(Text)
+            local Clean = tostring(Text or ""):gsub("[%s,]", "")
+            local Num, Unit = Clean:match("(%d+%.?%d*)(%a?)")
+            local N = tonumber(Num)
+            if not N then return nil end
+            return math.floor(N * (HUB_UNITS[Unit:lower()] or 1))
+        end
+
+        -- Devuelve nil si el label no se pudo leer, NO un contador propio: lo
+        -- que se reporta es el total de la cuenta en el juego, y el panel lo
+        -- guarda pisando el valor anterior. Mandar ahi los jars de esta corrida
+        -- (un numero chico, de otra magnitud) le borraria el total a la cuenta.
+        -- Sin lectura, el panel se queda con la ultima buena.
         local function HubReadHoney()
             local Label = HubResolveHoneyLabel()
-            if Label then
-                local Raw = tostring(Label.Text or ""):gsub("[^%d]", "")
-                local Num = tonumber(Raw)
-                if Num then return Num end
-            end
-            return Collected
+            if not Label then return nil end
+            local ok, Text = pcall(function() return Label.Text end)
+            if not ok then return nil end
+            return HubParseAmount(Text)
         end
 
         -- Envuelve SetStatus (ya existe, la GUI lo llama todo el tiempo) para

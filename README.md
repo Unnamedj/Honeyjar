@@ -93,13 +93,15 @@ botones de control ya funcionando.
 
 ## Cómo funciona
 
-### El conteo de jars
+### El conteo de honey
 
-El jar **no se agarra tocándolo** — el evento lo crea con `CanTouch=false`. Quien
-lo reclama es el cliente del juego cuando el `ProximityPrompt` se muestra, y ahí
-dispara `EventService/Bee/ClaimHoney`. El hub escucha ese mismo remote y cuenta
-cuando el jugador que se lo llevó sos vos. Por eso el número es el real y no una
-estimación, y por eso incluye los jars que agarraste a mano.
+El número no lo lleva el script aparte: lo lee del mismo contador que ve el
+jugador en pantalla (`LeftBottom > LeftBottom > CurrencyHoney`). Por eso es el
+real y no una estimación, e incluye lo que agarraste a mano y lo que la cuenta
+ya tenía antes de prender el bot. El juego lo muestra entero o abreviado
+("12.4K", "1.2M"), así que el script lo parsea antes de mandarlo. Si el label no
+se puede leer, no manda nada: el panel se queda con la última lectura buena en
+vez de pisar el total con un cero.
 
 ### Los hops
 
@@ -109,11 +111,16 @@ un beat y el siguiente.
 
 ### Los totales
 
-El script manda su contador **acumulado**, que arranca en 0 en cada corrida. El
-server guarda el *delta* contra el beat anterior de esa misma sesión, así un
-restart no se lee como una caída de 300 jars. Los deltas se acumulan en cubetas
-de 5 minutos (`samples`), que es de donde salen el gráfico, la racha y la mejor
-hora del día.
+Lo que reporta el bot **ya es el total de la cuenta**, así que el server lo
+*pisa*, no lo suma: volver a correr el script — y el auto-hop lo reinicia en cada
+salto — no vuelve a contar honey que ya estaba contado.
+
+Lo que sí se acumula es la *ganancia* entre dos lecturas. La lectura anterior
+queda en `accounts.honey_anchor`, en la cuenta y no en la sesión, porque la
+sesión muere en cada teleport. Esa ganancia es la que llena las cubetas de 5
+minutos (`samples`), de donde salen el gráfico, el ritmo, la racha y la mejor
+hora del día. Si el número baja porque gastaste honey en el juego, se reancla y
+la ganancia de ese beat es 0: el gráfico nunca resta.
 
 ### Los comandos
 

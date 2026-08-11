@@ -28,7 +28,17 @@ CREATE TABLE IF NOT EXISTS accounts (
     display_name    TEXT,
     avatar_url      TEXT,
     avatar_at       TIMESTAMPTZ,                 -- cuando se resolvio la miniatura (se refresca cada 6h)
+    -- El honey que muestra el juego. NO se acumula sumando lo que reporta el
+    -- bot: el bot lee el contador de la GUI, que YA es el total de la cuenta.
+    -- Se pisa con la ultima lectura, asi correr el script de nuevo (o hopear,
+    -- que reinicia el script) no vuelve a sumar un total que ya estaba contado.
     total_honey     BIGINT      NOT NULL DEFAULT 0,
+    -- Ultima lectura de ese contador. Es el ancla para sacar cuanto se gano
+    -- entre dos beats (lo que alimenta samples). Vive en la cuenta y no en la
+    -- sesion a proposito: la sesion muere en cada teleport, la cuenta no.
+    -- NULL = todavia no se leyo nada, asi que el primer beat solo ancla y no
+    -- cuenta ganancia (si no, la primera lectura entraria entera al grafico).
+    honey_anchor    BIGINT,
     total_hops      BIGINT      NOT NULL DEFAULT 0,
     -- Ultimo server visto. Los hops se derivan de aca: si el jobId del beat es
     -- distinto al guardado, la cuenta cambio de server. Contarlo en Lua no
@@ -50,9 +60,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     client_id      TEXT        NOT NULL,         -- uuid que genera el bot al arrancar
     started_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_beat_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Ultimo acumulado que reporto el bot en ESTA sesion. Es el ancla para
-    -- calcular deltas: el contador del script arranca en 0 en cada restart, asi
-    -- que sin esto un restart se leeria como "perdio 300 jars".
+    -- Cuanto SUMO la cuenta desde que arranco esta corrida (no la lectura cruda
+    -- del contador del juego: eso es un total historico y no dice nada de la
+    -- sesion). Se acumula con la ganancia de cada beat, igual que last_hops.
     last_honey     INTEGER     NOT NULL DEFAULT 0,
     last_hops      INTEGER     NOT NULL DEFAULT 0,
     status         TEXT        NOT NULL DEFAULT 'Idle',
@@ -107,3 +117,8 @@ CREATE INDEX IF NOT EXISTS commands_pending_idx
 -- columnas agregadas despues del primer deploy van aca. Todo idempotente: el
 -- archivo entero se corre en cada arranque.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_job_id TEXT;
+
+-- Ancla del contador de honey. En las bases que ya existian queda en NULL: el
+-- primer beat de cada cuenta la llena y de paso pisa el total_honey inflado que
+-- dejo el modelo viejo (sumaba el total del juego entero en cada corrida).
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS honey_anchor BIGINT;

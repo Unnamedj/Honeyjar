@@ -19,6 +19,22 @@ function clampInt(value, min, max, fallback = 0) {
     return Math.min(max, Math.max(min, n));
 }
 
+/**
+ * Lectura del contador de honey del juego. Es un TOTAL historico de la cuenta,
+ * no un contador de la corrida, asi que se guarda como valor absoluto y las
+ * ganancias salen de restar contra la lectura anterior.
+ *
+ * Devuelve null cuando el bot no mando el dato (o mando basura): sin lectura no
+ * se toca nada. Ojo con confundir "no lo pude leer" con "lei 0" — pisar el
+ * total con un 0 borraria el numero de la cuenta en el panel.
+ */
+function honeyReading(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Math.floor(Number(value));
+    if (!Number.isFinite(n) || n < 0) return null;
+    return Math.min(n, 1_000_000_000_000);
+}
+
 function text(value, max = 120) {
     if (value === null || value === undefined) return null;
     const s = String(value).trim();
@@ -142,19 +158,12 @@ botRouter.post("/beat", async (req, res) => {
         `INSERT INTO sessions (account_id, client_id)
          VALUES ($1, $2)
          ON CONFLICT (account_id, client_id) DO UPDATE SET last_beat_at = now()
-         RETURNING id, last_honey`,
+         RETURNING id`,
         [account.id, clientId]
     );
 
-    const honey = clampInt(req.body?.honey, 0, 10_000_000, 0);
+    const honey = honeyReading(req.body?.honey);
     const jobId = text(req.body?.jobId, 64);
-
-    // El contador del script es acumulado y arranca en 0 en cada corrida, asi
-    // que lo que se guarda es el delta contra el ultimo beat de ESTA sesion. Si
-    // el numero baja (el usuario recargo el script sin cambiar de client id),
-    // se toma el valor entero como delta nuevo en vez de restar y quedar en
-    // negativo.
-    const dHoney = honey >= session.last_honey ? honey - session.last_honey : honey;
 
     // Los hops se derivan del cambio de server, no del script: el teleport corta
     // la ejecucion antes de que un contador en Lua alcance a reportarse. El
@@ -163,11 +172,42 @@ botRouter.post("/beat", async (req, res) => {
 
     const statusKind = STATUS_KINDS.has(req.body?.statusKind) ? req.body.statusKind : "idle";
 
+    // El total se PISA con la lectura, no se suma: lo que reporta el bot ya es
+    // el total de la cuenta en el juego. Sumarlo era lo que inflaba el numero
+    // cada vez que el script arrancaba de nuevo (y arranca en cada hop).
+    //
+    // La ganancia del beat sale de restar contra el ancla anterior, dentro de
+    // la misma sentencia: el CTE lee el valor viejo con el snapshot del
+    // comando, asi que dos beats simultaneos de la misma cuenta no pueden
+    // contar la misma ganancia dos veces. Casos que dan 0:
+    //   · sin lectura        -> no se toca nada
+    //   · primer ancla       -> solo se guarda el punto de partida
+    //   · el numero bajo     -> gasto honey en el juego; se reancla y listo
+    const gain = await one(
+        `WITH prev AS (
+             SELECT honey_anchor FROM accounts WHERE id = $1
+         ),
+         upd AS (
+             UPDATE accounts
+                SET total_honey  = COALESCE($2::bigint, total_honey),
+                    honey_anchor = COALESCE($2::bigint, honey_anchor),
+                    total_hops   = total_hops + $3,
+                    last_job_id  = COALESCE($4, last_job_id),
+                    last_seen    = now()
+              WHERE id = $1
+         )
+         SELECT LEAST(2000000000,
+                      GREATEST(0, COALESCE($2::bigint - prev.honey_anchor, 0)))::int AS honey
+           FROM prev`,
+        [account.id, honey, dHops, jobId]
+    );
+    const dHoney = gain?.honey ?? 0;
+
     await query(
         `UPDATE sessions
             SET last_beat_at   = now(),
                 ended_at       = NULL,
-                last_honey     = $2,
+                last_honey     = last_honey + $2,
                 last_hops      = last_hops + $3,
                 status         = COALESCE($4, status),
                 status_kind    = $5,
@@ -179,11 +219,11 @@ botRouter.post("/beat", async (req, res) => {
                 job_id         = COALESCE($11, job_id),
                 place_id       = COALESCE($12, place_id),
                 server_players = COALESCE($13, server_players),
-                last_jar_at    = CASE WHEN $14 > 0 THEN now() ELSE last_jar_at END
+                last_jar_at    = CASE WHEN $2 > 0 THEN now() ELSE last_jar_at END
           WHERE id = $1`,
         [
             session.id,
-            honey,
+            dHoney,
             dHops,
             text(req.body?.status, 80),
             statusKind,
@@ -195,7 +235,6 @@ botRouter.post("/beat", async (req, res) => {
             jobId,
             clampInt(req.body?.placeId, 0, Number.MAX_SAFE_INTEGER, 0) || null,
             clampInt(req.body?.players, 0, 200, 0) || null,
-            dHoney,
         ]
     );
 
@@ -210,16 +249,6 @@ botRouter.post("/beat", async (req, res) => {
             [account.id, bucket, dHoney, dHops]
         );
     }
-
-    await query(
-        `UPDATE accounts
-            SET total_honey  = total_honey + $2,
-                total_hops   = total_hops  + $3,
-                last_job_id  = COALESCE($4, last_job_id),
-                last_seen    = now()
-          WHERE id = $1`,
-        [account.id, dHoney, dHops, jobId]
-    );
 
     // Los ids que el bot devuelve son comandos que ya aplico.
     const acked = Array.isArray(req.body?.ack)
