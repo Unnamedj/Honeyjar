@@ -60,7 +60,7 @@ for (const nombre of ["honey_hub.lua", "honey_tp.lua"]) {
             return res
                 .status(401)
                 .type("text/plain")
-                .send("-- Honey Hub: token invalido o cuenta sin acceso.\n");
+                .send("-- Honey Hub: invalid token or account without access.\n");
         }
 
         res.type("text/plain");

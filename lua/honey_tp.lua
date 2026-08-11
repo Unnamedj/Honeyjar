@@ -384,7 +384,7 @@ local function FireGrapple()
     if not Char:FindFirstChild("Grapple Hook") then
         local Grapple = FindTool("Grapple Hook")
         if not Grapple then
-            warn("[HONEY TP] Grapple: no tenes 'Grapple Hook' ni en char ni en backpack")
+            warn("[HONEY TP] Grapple: no 'Grapple Hook' in character or backpack")
             return false
         end
         pcall(function() Humanoid:EquipTool(Grapple) end)
@@ -399,7 +399,7 @@ local function FireGrapple()
     end
 
     if not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Grapple Hook")) then
-        warn("[HONEY TP] Grapple: el equip no registro a tiempo")
+        warn("[HONEY TP] Grapple: the equip did not register in time")
         return false
     end
 
@@ -407,14 +407,14 @@ local function FireGrapple()
     if not Remote then
         if not _GrappleWarned then
             _GrappleWarned = true
-            warn("[HONEY TP] Grapple: no se pudo resolver el remote UseItem (carpeta Net todavia cargando?)")
+            warn("[HONEY TP] Grapple: could not resolve the UseItem remote (Net folder still loading?)")
         end
         return false
     end
 
     local FireOK, FireErr = pcall(function() CleanFire(Remote, GRAPPLE_VALUE) end)
     if not FireOK then
-        warn("[HONEY TP] Grapple: fallo el fire -- " .. tostring(FireErr))
+        warn("[HONEY TP] Grapple: fire failed -- " .. tostring(FireErr))
         return false
     end
     LastGrappleFire = os.clock()
@@ -1087,7 +1087,7 @@ local function GetServerPage(Cursor)
     -- fallando (rate-limit, red)" de "no hay servers chicos disponibles"
     -- (que simplemente termina en GlobalBest = nil sin ningun error).
     if not OK then
-        warn("[HONEY TP] Hop: fallo el request a games.roblox.com -- " .. tostring(Result))
+        warn("[HONEY TP] Hop: request to games.roblox.com failed -- " .. tostring(Result))
         return nil
     end
     return Result
@@ -1196,7 +1196,7 @@ do
         local Conn
         Conn = TeleportService.TeleportInitFailed:Connect(function(Player, Result)
             if Player ~= LocalPlayer then return end
-            warn("[HONEY TP] Hop: teleport rechazado (" .. tostring(Result) .. ") -> " .. tostring(JobId))
+            warn("[HONEY TP] Hop: teleport rejected (" .. tostring(Result) .. ") -> " .. tostring(JobId))
             if Origen == "fetcher" and Hop.Drop then
                 task.spawn(Hop.Drop, JobId)
             end
@@ -1230,7 +1230,7 @@ local HOP_RETRY_WAIT = 1.5
 -- reintenta la busqueda en vez de tirar un teleport a ciegas.
 local function HopToSmallServer()
     while Config.Enabled and Config.AutoHop and MyToken == G.__HoneyTPRun do
-        SetStatus("Buscando server chico...", Color3.fromRGB(255, 110, 110))
+        SetStatus("Looking for a small server...", Color3.fromRGB(255, 110, 110))
         local JobId, Origen = Hop.Pick()
         if JobId then
             Hop.Teleport(JobId, Origen)
@@ -2380,7 +2380,7 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
     end
 
     if not HubHttpPost then
-        warn("[HONEY TP] Hub: tu ejecutor no expone request/http_request -- no puedo reportar")
+        warn("[HONEY TP] Hub: your executor does not expose request/http_request -- cannot report")
     else
         -- El total real ya lo muestra el propio juego en su GUI (LeftBottom >
         -- LeftBottom > CurrencyHoney). Leerlo de ahi es mas simple y mas fiel
@@ -2432,7 +2432,7 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
         local function HubClassifyStatus(Text)
             local Lower = tostring(Text):lower()
             if Lower:find("collecting") then return "collecting" end
-            if Lower:find("hop") or Lower:find("server chico") then return "hopping" end
+            if Lower:find("hop") or Lower:find("small server") then return "hopping" end
             if Lower:find("waiting") then return "waiting" end
             if Lower:find("stopped") then return "stopped" end
             return Config.Enabled and "waiting" or "idle"
@@ -2535,7 +2535,7 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 -- que saliste. Si la busqueda no encuentra nada, reintenta un par
                 -- de veces antes de rendirse.
                 task.spawn(function()
-                    SetStatus("Hop manual desde el panel...", COLORS.bad)
+                    SetStatus("Manual hop from the panel...", COLORS.bad)
                     for _ = 1, 4 do
                         local JobId, Origen = Hop.Pick()
                         if JobId then
@@ -2555,7 +2555,7 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
                 if type(Command) == "table" and Command.id then
                     local ok, err = pcall(HubApplyCommand, Command.kind, Command.value)
                     if not ok then
-                        warn("[HONEY TP] Hub: comando '" .. tostring(Command.kind) .. "' fallo -- " .. tostring(err))
+                        warn("[HONEY TP] Hub: command '" .. tostring(Command.kind) .. "' failed -- " .. tostring(err))
                     end
                     table.insert(HubAcked, Command.id)
                 end
@@ -2567,13 +2567,13 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
         task.spawn(function()
             local Hello = HubHttpPost("/api/bot/hello", HubSnapshot())
             if not Hello then
-                warn("[HONEY TP] Hub: no pude registrarme -- revisa la URL y el token")
+                warn("[HONEY TP] Hub: could not register -- check the URL and the token")
                 return
             end
             if type(Hello.beatMs) == "number" then HubBeatMs = Hello.beatMs end
             HubHandleCommands(Hello.commands)
 
-            print(("[HONEY TP] Hub: conectado como %s (beat %dms)"):format(LocalPlayer.Name, HubBeatMs))
+            print(("[HONEY TP] Hub: connected as %s (beat %dms)"):format(LocalPlayer.Name, HubBeatMs))
 
             while MyToken == G.__HoneyTPRun do
                 local Payload = HubSnapshot()

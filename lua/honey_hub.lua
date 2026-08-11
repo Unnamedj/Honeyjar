@@ -28,7 +28,7 @@ BASE_URL = tostring(BASE_URL or ""):gsub("/+$", "")
 TOKEN    = tostring(TOKEN or "")
 
 if BASE_URL == "" or TOKEN == "" then
-    warn("[HONEY HUB] falta URL o token — pasalos como argumentos: loadstring(...)(url, token)")
+    warn("[HONEY HUB] missing URL or token — pass them as arguments: loadstring(...)(url, token)")
     return
 end
 
@@ -37,7 +37,7 @@ local url = BASE_URL .. "/honey_tp.lua?token=" .. game:GetService("HttpService")
 
 local ok, chunkOrErr = pcall(game.HttpGet, game, url)
 if not ok then
-    warn("[HONEY HUB] no pude descargar el collector — " .. tostring(chunkOrErr))
+    warn("[HONEY HUB] could not download the collector — " .. tostring(chunkOrErr))
     return
 end
 
@@ -50,11 +50,11 @@ end
 
 local collector, compileErr = loadstring(chunkOrErr)
 if not collector then
-    warn("[HONEY HUB] el collector no compilo — " .. tostring(compileErr))
+    warn("[HONEY HUB] the collector did not compile — " .. tostring(compileErr))
     return
 end
 
 local ranOk, runErr = pcall(collector, BASE_URL, TOKEN)
 if not ranOk then
-    warn("[HONEY HUB] el collector fallo al arrancar — " .. tostring(runErr))
+    warn("[HONEY HUB] the collector failed to start — " .. tostring(runErr))
 end

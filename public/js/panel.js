@@ -21,7 +21,7 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
-const nf = new Intl.NumberFormat("es");
+const nf = new Intl.NumberFormat("en");
 const fmt = (n) => nf.format(Math.round(n || 0));
 
 function escapeHtml(value) {
@@ -31,13 +31,13 @@ function escapeHtml(value) {
 }
 
 function ago(stamp) {
-    if (!stamp) return "nunca";
+    if (!stamp) return "never";
     const secs = Math.max(0, Math.round((Date.now() - stamp) / 1000));
-    if (secs < 10) return "recién";
-    if (secs < 60) return `hace ${secs} s`;
-    if (secs < 3600) return `hace ${Math.floor(secs / 60)} min`;
-    if (secs < 86400) return `hace ${Math.floor(secs / 3600)} h`;
-    return `hace ${Math.floor(secs / 86400)} d`;
+    if (secs < 10) return "just now";
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}min ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    return `${Math.floor(secs / 86400)}d ago`;
 }
 
 function duration(secs) {
@@ -52,11 +52,11 @@ function duration(secs) {
 // El estado del bot se muestra SIEMPRE con punto + texto: el color repite lo
 // que dice la etiqueta, nunca lo reemplaza.
 const STATUS = {
-    collecting: { tone: "good",     label: "Recolectando" },
-    waiting:    { tone: "warning",  label: "Esperando jars" },
-    hopping:    { tone: "serious",  label: "Cambiando server" },
-    stopped:    { tone: "muted",    label: "Detenido" },
-    idle:       { tone: "muted",    label: "En espera" },
+    collecting: { tone: "good",     label: "Collecting" },
+    waiting:    { tone: "warning",  label: "Waiting for jars" },
+    hopping:    { tone: "serious",  label: "Hopping server" },
+    stopped:    { tone: "muted",    label: "Stopped" },
+    idle:       { tone: "muted",    label: "Idle" },
 };
 
 const RING = {
@@ -102,7 +102,7 @@ async function load() {
 function markStale() {
     const stale = Date.now() - state.lastOk > POLL_MS * 3;
     $("pulse").classList.toggle("pulse--stale", stale);
-    if (stale) $("pulse-text").textContent = "Sin conexión";
+    if (stale) $("pulse-text").textContent = "Offline";
 }
 
 // ── render ────────────────────────────────────────────────────
@@ -111,26 +111,26 @@ function render() {
     const { totals, accounts } = state.data;
 
     $("pulse").classList.remove("pulse--stale");
-    $("pulse-text").textContent = `${totals.online} en vivo`;
+    $("pulse-text").textContent = `${totals.online} live`;
 
     $("hero-honey").textContent = fmt(totals.honey);
     $("hero-sub").textContent = accounts.length
-        ? `Sumando ${accounts.length} ${accounts.length === 1 ? "cuenta" : "cuentas"}`
-        : "Todavía no hay cuentas conectadas";
+        ? `Across ${accounts.length} ${accounts.length === 1 ? "account" : "accounts"}`
+        : "No accounts connected yet";
 
     $("kpi-accounts").textContent = `${totals.online}/${totals.accounts}`;
     $("kpi-accounts-foot").textContent = totals.online
-        ? `${totals.online} reportando ahora`
-        : "ninguna reportando";
+        ? `${totals.online} reporting now`
+        : "none reporting";
     $("kpi-rate").textContent = fmt(totals.perHour);
     $("kpi-hops").textContent = fmt(totals.hops);
     $("kpi-streak").textContent = totals.streak;
     $("kpi-streak-foot").textContent = totals.bestHour
-        ? `mejor hora: ${String(totals.bestHour.hour).padStart(2, "0")}:00`
-        : "días seguidos";
+        ? `best hour: ${String(totals.bestHour.hour).padStart(2, "0")}:00`
+        : "days in a row";
 
     $("accounts-count").textContent = accounts.length
-        ? `${accounts.length} en total · ${totals.online} en vivo`
+        ? `${accounts.length} total · ${totals.online} live`
         : "";
 
     renderChart();
@@ -164,32 +164,32 @@ function renderChart() {
     const spec = selected
         ? {
               t: series.t, values: selected.series, label: selected.username,
-              context: series.honey, contextLabel: "Equipo completo", range: state.range,
+              context: series.honey, contextLabel: "Whole team", range: state.range,
           }
-        : { t: series.t, values: series.honey, label: "Equipo completo", range: state.range };
+        : { t: series.t, values: series.honey, label: "Whole team", range: state.range };
 
     areaChart($("chart"), spec);
 
-    const spanText = { "6h": "últimas 6 h", "24h": "últimas 24 h", "7d": "últimos 7 días" }[state.range];
-    const bucketText = { "6h": "cada 15 min", "24h": "por hora", "7d": "cada 6 h" }[state.range];
+    const spanText = { "6h": "last 6 h", "24h": "last 24 h", "7d": "last 7 days" }[state.range];
+    const bucketText = { "6h": "per 15 min", "24h": "per hour", "7d": "per 6 h" }[state.range];
     $("chart-title").textContent = selected
-        ? `Ritmo de ${selected.username}`
-        : "Ritmo de recolección";
+        ? `${selected.username} rate`
+        : "Collection rate";
     $("chart-sub").textContent = `Jars ${bucketText} · ${spanText}`;
 
     const legend = $("chart-legend");
     if (selected) {
         legend.innerHTML =
             `<span class="legend__item"><span class="legend__swatch" style="background:#ffab21"></span>${escapeHtml(selected.username)}</span>` +
-            `<span class="legend__item"><span class="legend__swatch" style="background:#6a6270"></span>Equipo completo</span>` +
-            `<button class="btn btn--sm btn--ghost" id="clear-selection">Ver el equipo</button>`;
+            `<span class="legend__item"><span class="legend__swatch" style="background:#6a6270"></span>Whole team</span>` +
+            `<button class="btn btn--sm btn--ghost" id="clear-selection">Back to team</button>`;
         $("clear-selection").addEventListener("click", () => {
             state.selected = null;
             render();
         });
     } else {
         legend.innerHTML = accounts.length
-            ? `<span class="legend__item muted">Tocá una tarjeta de cuenta para ver su curva sola.</span>`
+            ? `<span class="legend__item muted">Tap an account card to see its own curve.</span>`
             : "";
     }
 }
@@ -211,34 +211,34 @@ function tile(label, value, foot) {
 // El estado va SIEMPRE como punto + texto, igual que el de las cuentas: el
 // color repite lo que dice la etiqueta, no la reemplaza.
 function fetcherHealth(f) {
-    if (!f.running) return { tone: "muted", label: "Apagado" };
-    if (!f.total) return { tone: "warning", label: "Juntando servers" };
-    if (!f.disponibles) return { tone: "serious", label: "Pool agotado" };
-    return { tone: "good", label: "Activo" };
+    if (!f.running) return { tone: "muted", label: "Off" };
+    if (!f.total) return { tone: "warning", label: "Gathering servers" };
+    if (!f.disponibles) return { tone: "serious", label: "Pool drained" };
+    return { tone: "good", label: "Active" };
 }
 
 // Un aviso a la vez, el mas accionable primero: no sirve enterarse de que hay
 // rate-limits si en realidad el fetcher esta apagado.
 function fetcherNote(f) {
     if (!f.running) {
-        return "El fetcher está apagado, así que cada cuenta busca servers por su cuenta contra " +
-            "Roblox. Para prenderlo, poné tus proxies en la variable PROXIES del deploy.";
+        return "The fetcher is off, so every account looks for servers on its own against " +
+            "Roblox. To turn it on, put your proxies in the PROXIES variable of the deploy.";
     }
     if (!f.proxies) {
-        return "Corriendo sin proxies: todas las requests salen por la IP del panel y Roblox va " +
-            "a empezar a limitarlas. Poné PROXIES para repartirlas.";
+        return "Running with no proxies: every request goes out through the panel IP and Roblox " +
+            "will start rate-limiting them. Set PROXIES to spread them out.";
     }
     if (f.rateLimits > 0 && !f.proxiesRotativos) {
-        return "Ninguno de tus proxies rota el id de sesión, así que todas las requests salen por " +
-            "la misma IP y por eso aparecen los rate-limits. Un proxy con “-session-” en el " +
-            "usuario da una IP distinta por request.";
+        return "None of your proxies rotates the session id, so every request goes out through " +
+            "the same IP and that is where the rate limits come from. A proxy with “-session-” in " +
+            "the username gives a different IP per request.";
     }
     if (f.proxiesPenalizados >= f.proxies && f.proxies > 0) {
-        return "Todos tus proxies están fuera de rotación por fallar (revisá host, puerto y " +
-            "credenciales). El scraper NO cae a pedir directo mientras tanto — eso quemaría la IP " +
-            "del panel — así que el pool no crece hasta que alguno se recupere.";
+        return "All your proxies are out of rotation after failing (check host, port and " +
+            "credentials). The scraper will NOT fall back to direct requests meanwhile — that " +
+            "would burn the panel IP — so the pool stops growing until one recovers.";
     }
-    if (f.ultimoError) return `Último error: ${f.ultimoError}`;
+    if (f.ultimoError) return `Last error: ${f.ultimoError}`;
     return null;
 }
 
@@ -251,24 +251,24 @@ function renderFetcher() {
     $("fetcher-badge-text").textContent = health.label;
 
     const visto = f.ultimoScrapeHaceS === null
-        ? "sin datos todavía"
-        : `visto ${ago(Date.now() - f.ultimoScrapeHaceS * 1000)}`;
-    $("fetcher-sub").textContent = `De acá salen los saltos de Hop after collect · ${visto}`;
+        ? "no data yet"
+        : `seen ${ago(Date.now() - f.ultimoScrapeHaceS * 1000)}`;
+    $("fetcher-sub").textContent = `This is where Hop after collect jumps come from · ${visto}`;
 
     // Frenado = el backoff subio el delay porque Roblox devolvio 429.
     const frenado = f.delayMs > f.delayBaseMs;
 
     $("fetcher-tiles").innerHTML = [
-        tile("En el pool", fmt(f.total), `${fmt(f.reservados)} repartidos ahora`),
-        tile("Disponibles", fmt(f.disponibles), `hasta ${f.maxPlayers} jugadores`),
-        tile("Sin repartir", fmt(f.frescos), "nunca los tocó nadie"),
-        tile("Rate limits", fmt(f.rateLimits), f.rateLimits ? "429 de Roblox" : "ninguno"),
-        tile("Errores", fmt(f.errores), f.errores ? "requests fallidas" : "ninguno"),
+        tile("In the pool", fmt(f.total), `${fmt(f.reservados)} handed out now`),
+        tile("Available", fmt(f.disponibles), `up to ${f.maxPlayers} players`),
+        tile("Untouched", fmt(f.frescos), "nobody has been sent there"),
+        tile("Rate limits", fmt(f.rateLimits), f.rateLimits ? "429s from Roblox" : "none"),
+        tile("Errors", fmt(f.errores), f.errores ? "failed requests" : "none"),
         // Apagado, el delay configurado no describe nada: no hay requests que
         // espaciar. Mostrarlo como un numero vivo seria inventar actividad.
         f.running
-            ? tile("Ritmo", `${fmt(f.delayMs)} ms`, frenado ? "frenado por rate-limit" : "entre requests")
-            : tile("Ritmo", "—", "el scraper no corre"),
+            ? tile("Pace", `${fmt(f.delayMs)} ms`, frenado ? "slowed by rate limits" : "between requests")
+            : tile("Pace", "—", "the scraper is not running"),
     ].join("");
 
     const note = fetcherNote(f);
@@ -321,10 +321,10 @@ function renderAccounts() {
         host.innerHTML = `
             <div class="empty" style="grid-column:1/-1">
                 <div class="empty__icon">🐝</div>
-                <h3>Ninguna cuenta conectada todavía</h3>
-                <p>Pegá tu token en el collector de cada cuenta y van a aparecer acá solas,
-                   con su avatar, su contador y sus controles.</p>
-                <button class="btn btn--primary" id="empty-connect">Ver cómo conectar</button>
+                <h3>No accounts connected yet</h3>
+                <p>Paste your token into the collector on each account and they show up here on
+                   their own, with their avatar, their counter and their controls.</p>
+                <button class="btn btn--primary" id="empty-connect">See how to connect</button>
             </div>`;
         $("empty-connect").addEventListener("click", openConnectModal);
         return;
@@ -374,25 +374,25 @@ function accountCard(a) {
 
         <div>
             <div class="account__honey num">
-                ${fmt(a.honey)} <small>honey en el juego</small>
+                ${fmt(a.honey)} <small>honey in game</small>
             </div>
             <div class="tile__spark" data-spark></div>
             <div class="muted" style="font-size:11px">
-                ${fmt(a.sessionHoney)} en esta sesión · ${escapeHtml(a.status)}
+                ${fmt(a.sessionHoney)} this session · ${escapeHtml(a.status)}
             </div>
         </div>
 
         <div class="meta">
             <div class="meta__row"><span class="meta__key">Hops</span><span class="meta__val num">${fmt(a.hops)}</span></div>
             <div class="meta__row"><span class="meta__key">Uptime</span><span class="meta__val">${uptime}</span></div>
-            <div class="meta__row"><span class="meta__key">Último jar</span><span class="meta__val">${ago(a.lastJarAt)}</span></div>
+            <div class="meta__row"><span class="meta__key">Last jar</span><span class="meta__val">${ago(a.lastJarAt)}</span></div>
             <div class="meta__row"><span class="meta__key">Server</span><span class="meta__val">${
                 a.jobId ? `${escapeHtml(a.jobId.slice(0, 8))}${a.players ? ` · ${a.players}p` : ""}` : "—"
             }</span></div>
-            <div class="meta__row"><span class="meta__key">Método</span><span class="meta__val">${
+            <div class="meta__row"><span class="meta__key">Method</span><span class="meta__val">${
                 escapeHtml(a.method || "—")
             }${a.smartTp ? " (Smart)" : ""}</span></div>
-            <div class="meta__row"><span class="meta__key">Velocidad</span><span class="meta__val num">${
+            <div class="meta__row"><span class="meta__key">Speed</span><span class="meta__val num">${
                 a.speed ? `${a.speed}` : "—"
             }</span></div>
         </div>
@@ -401,29 +401,29 @@ function accountCard(a) {
             ${
                 a.pendingCommands
                     ? `<span class="controls__pending">${a.pendingCommands} ${
-                          a.pendingCommands === 1 ? "orden pendiente" : "órdenes pendientes"
-                      } — se aplica en el próximo beat</span>`
+                          a.pendingCommands === 1 ? "pending order" : "pending orders"
+                      } — applied on the next beat</span>`
                     : ""
             }
             <button class="btn btn--sm ${a.enabled ? "btn--on" : ""}" data-cmd="enabled"
                     data-value="${a.enabled ? "off" : "on"}">
-                ${a.enabled ? "Pausar" : "Recolectar"}
+                ${a.enabled ? "Pause" : "Collect"}
             </button>
             <button class="btn btn--sm ${a.method === "Grapple" ? "btn--on" : ""}"
                     data-cmd="method" data-value="Grapple"
-                    title="Método: Grapple" aria-label="Usar método Grapple">Grapple</button>
+                    title="Method: Grapple" aria-label="Use Grapple method">Grapple</button>
             <button class="btn btn--sm ${a.method === "Carpet" ? "btn--on" : ""}"
                     data-cmd="method" data-value="Carpet"
-                    title="Método: Carpet" aria-label="Usar método Carpet">Carpet</button>
+                    title="Method: Carpet" aria-label="Use Carpet method">Carpet</button>
             <button class="btn btn--sm ${a.smartTp ? "btn--on" : ""}" data-cmd="smart"
                     data-value="${a.smartTp ? "off" : "on"}" title="Smart TP">Smart TP</button>
             <button class="btn btn--sm ${a.autoHop ? "btn--on" : ""}" data-cmd="autohop"
-                    data-value="${a.autoHop ? "off" : "on"}" title="Auto Hop">Hop auto</button>
-            <button class="btn btn--sm" data-cmd="hop" title="Saltar de server ahora">Hop ya</button>
+                    data-value="${a.autoHop ? "off" : "on"}" title="Auto Hop">Auto hop</button>
+            <button class="btn btn--sm" data-cmd="hop" title="Hop server now">Hop now</button>
             <button class="btn btn--sm ${selected ? "btn--on" : "btn--ghost"}" data-focus>
-                ${selected ? "En el gráfico" : "Ver curva"}
+                ${selected ? "On the chart" : "See curve"}
             </button>
-            <button class="btn btn--sm btn--danger" data-remove title="Quitar del panel">Quitar</button>
+            <button class="btn btn--sm btn--danger" data-remove title="Remove from panel">Remove</button>
         </div>
     </article>`;
 }
@@ -460,15 +460,15 @@ function renderRanking() {
 
     $("table-view").innerHTML = `
         <table class="data">
-            <caption class="sr-only">Totales por cuenta</caption>
+            <caption class="sr-only">Totals per account</caption>
             <thead>
                 <tr>
-                    <th scope="col">Cuenta</th>
-                    <th scope="col">Estado</th>
+                    <th scope="col">Account</th>
+                    <th scope="col">Status</th>
                     <th scope="col">Honey</th>
-                    <th scope="col">Sesión</th>
+                    <th scope="col">Session</th>
                     <th scope="col">Hops</th>
-                    <th scope="col">Último jar</th>
+                    <th scope="col">Last jar</th>
                 </tr>
             </thead>
             <tbody>
@@ -514,9 +514,9 @@ async function sendCommand(accountId, kind, value, button) {
 
 async function removeAccount(account) {
     const ok = confirm(
-        `¿Quitar "${account.username}" del panel?\n\n` +
-        "Se borran su historial y sus totales. Si el script sigue corriendo con tu token, " +
-        "la cuenta vuelve a aparecer en el próximo beat, arrancando de cero."
+        `Remove "${account.username}" from the panel?\n\n` +
+        "Its history and totals are deleted. If the script keeps running with your token, " +
+        "the account shows up again on the next beat, starting from zero."
     );
     if (!ok) return;
     await fetch(`/api/accounts/${account.id}`, { method: "DELETE" });
@@ -549,14 +549,14 @@ function renderAdmin() {
     const { totals, users } = state.adminData;
 
     $("admin-sub").textContent = totals.pending
-        ? `${totals.users} en total · ${totals.pending} esperando acceso`
-        : `${totals.users} en total · ninguno esperando`;
+        ? `${totals.users} total · ${totals.pending} waiting for access`
+        : `${totals.users} total · none waiting`;
 
     const tiles = [
-        ["Usuarios", totals.users, `${totals.approved} con acceso`],
-        ["Cuentas creadas", totals.accounts, "sumando todos"],
-        ["Reportando ahora", totals.online, `${totals.running} con el collector prendido`],
-        ["Honey del hub", fmt(totals.honey), "total de todas las cuentas"],
+        ["Users", totals.users, `${totals.approved} with access`],
+        ["Accounts created", totals.accounts, "across everyone"],
+        ["Reporting now", totals.online, `${totals.running} with the collector on`],
+        ["Hub honey", fmt(totals.honey), "total across all accounts"],
     ];
     $("admin-tiles").innerHTML = tiles
         .map(
@@ -571,16 +571,16 @@ function renderAdmin() {
 
     $("admin-users").innerHTML = `
         <table class="data">
-            <caption class="sr-only">Usuarios del hub y su acceso</caption>
+            <caption class="sr-only">Hub users and their access</caption>
             <thead>
                 <tr>
-                    <th scope="col">Usuario</th>
-                    <th scope="col">Cuentas</th>
-                    <th scope="col">En vivo</th>
-                    <th scope="col">Corriendo</th>
+                    <th scope="col">User</th>
+                    <th scope="col">Accounts</th>
+                    <th scope="col">Live</th>
+                    <th scope="col">Running</th>
                     <th scope="col">Honey</th>
-                    <th scope="col">Última señal</th>
-                    <th scope="col">Acceso</th>
+                    <th scope="col">Last seen</th>
+                    <th scope="col">Access</th>
                 </tr>
             </thead>
             <tbody>
@@ -612,10 +612,10 @@ function renderAdmin() {
 }
 
 function accessCell(user) {
-    if (user.admin) return '<span class="muted">siempre</span>';
+    if (user.admin) return '<span class="muted">always</span>';
     return user.approved
-        ? `<button class="btn btn--sm btn--danger" data-access="${user.id}" data-to="off">Quitar acceso</button>`
-        : `<button class="btn btn--sm btn--primary" data-access="${user.id}" data-to="on">Dar acceso</button>`;
+        ? `<button class="btn btn--sm btn--danger" data-access="${user.id}" data-to="off">Revoke access</button>`
+        : `<button class="btn btn--sm btn--primary" data-access="${user.id}" data-to="on">Grant access</button>`;
 }
 
 async function setAccess(userId, approved, button) {
@@ -692,27 +692,27 @@ function wireModal() {
     const copyTo = async (button, text, restore) => {
         try {
             await navigator.clipboard.writeText(text);
-            button.textContent = "¡Copiado!";
+            button.textContent = "Copied!";
         } catch {
             // El portapapeles necesita contexto seguro; sin https queda el
             // seleccionar-y-copiar a mano, asi que al menos se avisa.
-            button.textContent = "Copialo a mano";
+            button.textContent = "Copy it by hand";
         }
         setTimeout(() => (button.textContent = restore), 1600);
     };
 
     $("token-copy").addEventListener("click", (event) =>
-        copyTo(event.target, state.token ?? "", "Copiar")
+        copyTo(event.target, state.token ?? "", "Copy")
     );
 
     $("snippet-copy").addEventListener("click", (event) =>
-        copyTo(event.target, snippetFor(state.token ?? ""), "Copiar las 3 líneas")
+        copyTo(event.target, snippetFor(state.token ?? ""), "Copy the 3 lines")
     );
 
     $("token-rotate").addEventListener("click", async () => {
         const ok = confirm(
-            "Rotar el token invalida el anterior al instante.\n\n" +
-            "Todas las cuentas que lo estén usando dejan de reportar hasta que actualices el script. ¿Seguimos?"
+            "Rotating the token kills the old one instantly.\n\n" +
+            "Every account using it stops reporting until you update the script. Continue?"
         );
         if (!ok) return;
         const res = await fetch("/api/auth/token/rotate", { method: "POST" });
@@ -749,7 +749,7 @@ function wireControls() {
         state.tableView = !state.tableView;
         $("ranking").hidden = state.tableView;
         $("table-view").hidden = !state.tableView;
-        $("table-toggle").textContent = state.tableView ? "Ver como ranking" : "Ver como tabla";
+        $("table-toggle").textContent = state.tableView ? "View as ranking" : "View as table";
         $("table-toggle").setAttribute("aria-expanded", String(state.tableView));
     });
 

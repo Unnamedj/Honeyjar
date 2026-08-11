@@ -36,7 +36,7 @@ const registerLimit = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 3,
     error: "demasiadas_cuentas",
-    message: "Demasiadas cuentas nuevas desde acá. Probá de nuevo en un rato.",
+    message: "Too many new accounts from here. Try again in a while.",
 });
 
 // El login cuenta SOLO los fallidos: al que acierta no se le gasta cupo, asi
@@ -45,7 +45,7 @@ const loginLimit = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 10,
     error: "demasiados_intentos",
-    message: "Demasiados intentos fallidos. Esperá unos minutos.",
+    message: "Too many failed attempts. Wait a few minutes.",
     countIf: onlyFailures,
 });
 
@@ -60,7 +60,7 @@ authRouter.post("/register", registerLimit, async (req, res) => {
         if (count >= cap) {
             return res.status(403).json({
                 error: "cupo_lleno",
-                message: "El hub no está tomando cuentas nuevas.",
+                message: "The hub is not taking new accounts.",
             });
         }
     }
@@ -71,13 +71,13 @@ authRouter.post("/register", registerLimit, async (req, res) => {
     if (!USERNAME_RE.test(username)) {
         return res.status(400).json({
             error: "usuario_invalido",
-            message: "3 a 24 caracteres: letras, numeros, punto, guion o guion bajo.",
+            message: "3 to 24 characters: letters, numbers, dot, dash or underscore.",
         });
     }
     if (password.length < MIN_PASSWORD || password.length > MAX_PASSWORD) {
         return res.status(400).json({
             error: "password_invalida",
-            message: `Entre ${MIN_PASSWORD} y ${MAX_PASSWORD} caracteres.`,
+            message: `Between ${MIN_PASSWORD} and ${MAX_PASSWORD} characters.`,
         });
     }
 
@@ -87,7 +87,7 @@ authRouter.post("/register", registerLimit, async (req, res) => {
     if (exists) {
         return res.status(409).json({
             error: "usuario_tomado",
-            message: "Ese usuario ya existe.",
+            message: "That username is taken.",
         });
     }
 
@@ -133,7 +133,7 @@ authRouter.post("/login", loginLimit, async (req, res) => {
     if (!ok) {
         return res.status(401).json({
             error: "credenciales",
-            message: "Usuario o contrasena incorrectos.",
+            message: "Wrong username or password.",
         });
     }
 

@@ -50,13 +50,13 @@ function niceMax(value) {
 function formatTime(stamp, range) {
     const d = new Date(stamp);
     if (range === "7d") {
-        return d.toLocaleDateString("es", { weekday: "short", day: "numeric" });
+        return d.toLocaleDateString("en", { weekday: "short", day: "numeric" });
     }
-    return d.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatFull(stamp) {
-    return new Date(stamp).toLocaleString("es", {
+    return new Date(stamp).toLocaleString("en", {
         day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
     });
 }
@@ -82,7 +82,7 @@ export function areaChart(host, spec) {
     if (!t.length || !hasData) {
         const empty = document.createElement("div");
         empty.className = "chart-empty";
-        empty.textContent = "Todavía no hay jars en este rango. Prendé Auto Collect en alguna cuenta.";
+        empty.textContent = "No jars in this range yet. Turn on Auto Collect on some account.";
         host.appendChild(empty);
         return;
     }
@@ -103,7 +103,7 @@ export function areaChart(host, spec) {
         viewBox: `0 0 ${W} ${H}`,
         preserveAspectRatio: "none",
         role: "img",
-        "aria-label": `${spec.label}: ritmo de recolección`,
+        "aria-label": `${spec.label}: collection rate`,
     });
 
     const gradId = `honey-fill-${Math.random().toString(36).slice(2, 8)}`;

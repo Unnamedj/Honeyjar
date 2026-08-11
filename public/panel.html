@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Honey Hub — panel</title>
+    <title>Honey Hub — dashboard</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%AF%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -26,47 +26,47 @@
 
             <span class="pulse" id="pulse">
                 <span class="pulse__dot"></span>
-                <span id="pulse-text">Conectando…</span>
+                <span id="pulse-text">Connecting…</span>
             </span>
 
-            <div class="segmented" id="views" role="group" aria-label="Vista" hidden>
-                <button type="button" data-view="dash"  aria-pressed="true">Panel</button>
-                <button type="button" data-view="admin" aria-pressed="false">Usuarios</button>
+            <div class="segmented" id="views" role="group" aria-label="View" hidden>
+                <button type="button" data-view="dash"  aria-pressed="true">Dashboard</button>
+                <button type="button" data-view="admin" aria-pressed="false">Users</button>
             </div>
 
-            <button class="btn btn--primary btn--sm" id="connect-btn">＋ Conectar cuenta</button>
-            <button class="btn btn--ghost btn--sm" id="logout-btn" title="Cerrar sesión">Salir</button>
+            <button class="btn btn--primary btn--sm" id="connect-btn">＋ Connect account</button>
+            <button class="btn btn--ghost btn--sm" id="logout-btn" title="Sign out">Sign out</button>
         </header>
 
         <main id="main">
             <!-- ── Hero + KPIs ────────────────────────────────────── -->
             <section class="hero">
                 <div class="card hero__figure">
-                    <span class="eyebrow">Honey en el juego</span>
+                    <span class="eyebrow">Honey in game</span>
                     <span class="hero__value num" id="hero-honey">—</span>
-                    <span class="hero__label" id="hero-sub">Sumando todas tus cuentas</span>
+                    <span class="hero__label" id="hero-sub">Across all your accounts</span>
                 </div>
 
                 <div class="kpis">
                     <div class="tile">
-                        <span class="tile__label">Cuentas conectadas</span>
+                        <span class="tile__label">Connected accounts</span>
                         <span class="tile__value num" id="kpi-accounts">—</span>
                         <span class="tile__foot" id="kpi-accounts-foot">—</span>
                     </div>
                     <div class="tile">
-                        <span class="tile__label">Ritmo (última hora)</span>
+                        <span class="tile__label">Rate (last hour)</span>
                         <span class="tile__value num" id="kpi-rate">—</span>
-                        <span class="tile__foot">jars / hora</span>
+                        <span class="tile__foot">jars / hour</span>
                     </div>
                     <div class="tile">
                         <span class="tile__label">Server hops</span>
                         <span class="tile__value num" id="kpi-hops">—</span>
-                        <span class="tile__foot">saltos totales</span>
+                        <span class="tile__foot">total hops</span>
                     </div>
                     <div class="tile">
-                        <span class="tile__label">Racha</span>
+                        <span class="tile__label">Streak</span>
                         <span class="tile__value num" id="kpi-streak">—</span>
-                        <span class="tile__foot" id="kpi-streak-foot">días seguidos</span>
+                        <span class="tile__foot" id="kpi-streak-foot">days in a row</span>
                     </div>
                 </div>
             </section>
@@ -75,11 +75,11 @@
             <section class="card chart-card">
                 <div class="card__head">
                     <div>
-                        <h2 class="card__title" id="chart-title">Ritmo de recolección</h2>
-                        <span class="eyebrow" id="chart-sub">Jars por hora · últimas 24 h</span>
+                        <h2 class="card__title" id="chart-title">Collection rate</h2>
+                        <span class="eyebrow" id="chart-sub">Jars per hour · last 24 h</span>
                     </div>
                     <div class="topbar__spacer"></div>
-                    <div class="segmented" id="range" role="group" aria-label="Rango de tiempo">
+                    <div class="segmented" id="range" role="group" aria-label="Time range">
                         <button type="button" data-range="6h"  aria-pressed="false">6 h</button>
                         <button type="button" data-range="24h" aria-pressed="true">24 h</button>
                         <button type="button" data-range="7d"  aria-pressed="false">7 d</button>
@@ -95,7 +95,7 @@
             <section class="card" id="fetcher-section">
                 <div class="card__head">
                     <div>
-                        <h2 class="card__title">Pool de servers</h2>
+                        <h2 class="card__title">Server pool</h2>
                         <span class="eyebrow" id="fetcher-sub">—</span>
                     </div>
                     <div class="topbar__spacer"></div>
@@ -113,21 +113,21 @@
             <!-- ── Podio ──────────────────────────────────────────── -->
             <section id="podium-section" hidden>
                 <div class="section-head">
-                    <h2>Podio</h2>
-                    <span class="eyebrow">Las tres cuentas que más juntaron</span>
+                    <h2>Podium</h2>
+                    <span class="eyebrow">The three accounts that collected the most</span>
                 </div>
                 <div class="podium" id="podium"></div>
             </section>
 
             <!-- ── Cuentas ────────────────────────────────────────── -->
             <div class="section-head">
-                <h2>Tus cuentas</h2>
+                <h2>Your accounts</h2>
                 <span class="eyebrow" id="accounts-count"></span>
                 <div class="topbar__spacer"></div>
-                <div class="segmented" id="sort" role="group" aria-label="Ordenar cuentas">
+                <div class="segmented" id="sort" role="group" aria-label="Sort accounts">
                     <button type="button" data-sort="honey"  aria-pressed="true">Honey</button>
-                    <button type="button" data-sort="live"   aria-pressed="false">En vivo</button>
-                    <button type="button" data-sort="name"   aria-pressed="false">Nombre</button>
+                    <button type="button" data-sort="live"   aria-pressed="false">Live</button>
+                    <button type="button" data-sort="name"   aria-pressed="false">Name</button>
                 </div>
             </div>
             <div class="accounts" id="accounts"></div>
@@ -136,10 +136,10 @@
             <section id="ranking-section" hidden>
                 <div class="section-head">
                     <h2>Ranking</h2>
-                    <span class="eyebrow">Total histórico por cuenta</span>
+                    <span class="eyebrow">All-time total per account</span>
                     <div class="topbar__spacer"></div>
                     <button class="btn btn--sm btn--ghost" id="table-toggle" aria-expanded="false">
-                        Ver como tabla
+                        View as table
                     </button>
                 </div>
                 <div class="card">
@@ -151,7 +151,7 @@
             <!-- ── Admin: usuarios y acceso (solo el primer usuario) ─────── -->
             <section id="view-admin" hidden>
                 <div class="section-head">
-                    <h2>Usuarios del hub</h2>
+                    <h2>Hub users</h2>
                     <span class="eyebrow" id="admin-sub">—</span>
                 </div>
 
@@ -160,9 +160,9 @@
                 <div class="card" style="margin-top:16px">
                     <div class="card__head">
                         <div>
-                            <h2 class="card__title">Acceso al loader</h2>
+                            <h2 class="card__title">Loader access</h2>
                             <span class="eyebrow">
-                                Sin acceso no ven su token ni pueden reportar al panel
+                                Without access they get no token and cannot report to the panel
                             </span>
                         </div>
                     </div>
@@ -177,51 +177,51 @@
         <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="connect-title">
             <div class="modal__head">
                 <span class="brand__mark">🔑</span>
-                <h2 id="connect-title">Conectar una cuenta</h2>
-                <button class="btn btn--sm btn--ghost" id="connect-close" aria-label="Cerrar">✕</button>
+                <h2 id="connect-title">Connect an account</h2>
+                <button class="btn btn--sm btn--ghost" id="connect-close" aria-label="Close">✕</button>
             </div>
 
             <div id="connect-locked" hidden>
                 <p class="muted" style="font-size:13px;margin:0 0 10px">
-                    Tu cuenta todavía <strong>no tiene acceso</strong>. El loader y tu token aparecen acá
-                    apenas el admin te habilite; hasta entonces el panel no acepta reportes de tus bots.
+                    Your account <strong>does not have access yet</strong>. The loader and your token
+                    show up here as soon as the admin approves you; until then the panel rejects your bots.
                 </p>
                 <p class="muted" style="font-size:12px;margin:0">
-                    Ya quedaste registrado: no hace falta que vuelvas a crear la cuenta.
+                    You are already registered: no need to sign up again.
                 </p>
             </div>
 
             <div id="connect-open">
             <p class="muted" style="font-size:13px;margin:0">
-                Este es <strong>tu</strong> token. Todas las cuentas de Roblox que lo usen reportan a este
-                panel y a ningún otro. No lo compartas con nadie que no quieras ver acá adentro.
+                This is <strong>your</strong> token. Every Roblox account using it reports to this panel
+                and to no other. Do not share it with anyone you would not want in here.
             </p>
 
             <div class="code">
                 <span id="token-value">…</span>
-                <button class="btn btn--sm" id="token-copy">Copiar</button>
+                <button class="btn btn--sm" id="token-copy">Copy</button>
             </div>
 
             <ol class="steps">
-                <li>Abrí el ejecutor en la cuenta que querés conectar.</li>
-                <li>Pegá <strong>esto antes</strong> de tu script del collector:</li>
+                <li>Open your executor on the account you want to connect.</li>
+                <li>Paste <strong>this before</strong> your collector script:</li>
             </ol>
 
             <pre class="snippet" id="snippet">…</pre>
             <button class="btn btn--primary btn--sm" id="snippet-copy" style="margin-top:10px">
-                Copiar las 3 líneas
+                Copy the 3 lines
             </button>
 
             <ol class="steps" start="3">
-                <li>Ejecutá el collector como siempre. En unos segundos la cuenta aparece sola acá,
-                    con su avatar y su contador.</li>
-                <li>Repetí en cada cuenta. El mismo token en todas: se separan solas por usuario de Roblox.</li>
+                <li>Run the collector as usual. In a few seconds the account shows up here on its own,
+                    with its avatar and its counter.</li>
+                <li>Repeat on every account. The same token on all of them: they split by Roblox user on their own.</li>
             </ol>
 
             <div class="modal__head" style="margin-top:22px">
-                <button class="btn btn--sm btn--danger" id="token-rotate">Rotar token</button>
+                <button class="btn btn--sm btn--danger" id="token-rotate">Rotate token</button>
                 <span class="muted" style="font-size:11px">
-                    Genera uno nuevo e invalida el anterior. Vas a tener que actualizar todos los scripts.
+                    Generates a new one and kills the old one. You will have to update every script.
                 </span>
             </div>
             </div>

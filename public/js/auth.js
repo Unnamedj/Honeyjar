@@ -14,22 +14,22 @@
 
     const COPY = {
         login: {
-            submit: "Entrar",
-            switchText: "¿Todavía no tenés cuenta?",
-            switchBtn: "Creá una",
+            submit: "Sign in",
+            switchText: "No account yet?",
+            switchBtn: "Create one",
             autocomplete: "current-password",
             tagline:
-                "Todas tus cuentas recolectando, en una sola pantalla. Honey total, ritmo por hora, " +
-                "ranking y control remoto — y lo tuyo solo lo ves vos.",
+                "Every account of yours collecting, on one screen. Total honey, hourly rate, " +
+                "ranking and remote control — and only you see yours.",
         },
         register: {
-            submit: "Crear cuenta",
-            switchText: "¿Ya tenés cuenta?",
-            switchBtn: "Entrá",
+            submit: "Create account",
+            switchText: "Already have an account?",
+            switchBtn: "Sign in",
             autocomplete: "new-password",
             tagline:
-                "Creá tu cuenta y esperá a que el admin te habilite. Ahí te aparece tu token propio: " +
-                "todas las cuentas de Roblox que lo peguen reportan a TU panel — nunca al de otro.",
+                "Create your account and wait for the admin to approve you. Then your own token " +
+                "shows up: every Roblox account that pastes it reports to YOUR panel — never anyone else's.",
         },
     };
 
@@ -45,7 +45,7 @@
         switchText.textContent = copy.switchText;
         switchBtn.textContent = copy.switchBtn;
         password.autocomplete = copy.autocomplete;
-        password.placeholder = mode === "register" ? "mínimo 8 caracteres" : "••••••••";
+        password.placeholder = mode === "register" ? "at least 8 characters" : "••••••••";
         tagline.textContent = copy.tagline;
         show(errorBox, "");
         show(successBox, "");
@@ -71,7 +71,7 @@
             const body = await res.json().catch(() => ({}));
 
             if (!res.ok) {
-                show(errorBox, body.message || "No se pudo completar. Probá de nuevo.");
+                show(errorBox, body.message || "Could not complete. Try again.");
                 return;
             }
 
@@ -79,7 +79,7 @@
             // en el modal de conectar cuentas, con el snippet listo para copiar.
             location.href = mode === "register" ? "/panel?welcome=1" : "/panel";
         } catch {
-            show(errorBox, "Sin conexión con el servidor.");
+            show(errorBox, "No connection to the server.");
         } finally {
             submit.disabled = false;
             submit.textContent = COPY[mode].submit;

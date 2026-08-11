@@ -12,6 +12,10 @@ corriendo el mismo script (incluso con la misma cuenta de Roblox) y sus
 contadores no se tocan: la clave del sistema es `(usuario, cuenta de Roblox)`,
 nunca la cuenta sola.
 
+La interfaz está **en inglés**: el panel lo usan las cuentas que reparten el
+loader, no solo vos. Los comentarios del código y este README siguen en
+castellano — son para quien lo mantiene, no para quien lo usa.
+
 ---
 
 ## Cómo se ve
@@ -25,7 +29,7 @@ nunca la cuenta sola.
   de las últimas 3 h, hops, uptime, hace cuánto agarró el último jar, server y
   jugadores, método y velocidad — más los botones de control.
 - **Ranking** con barras, y la misma tabla en versión texto.
-- **Pestaña Usuarios**, solo para el admin: quién se registró, cuántas cuentas
+- **Pestaña Users**, solo para el admin: quién se registró, cuántas cuentas
   tiene cada uno, cuántas están reportando ahora mismo — y el botón que les
   habilita o les corta el loader.
 
@@ -81,7 +85,7 @@ puede apagar sin querer ni falsificar desde la UI.
 
 Del segundo en adelante, registrarse **no alcanza**. Entran bloqueados: ven el
 panel, pero no su token ni el loader, y `/api/bot/*` les rechaza los beats con
-`403`. El admin tiene una pestaña **Usuarios** arriba a la derecha con cuántos
+`403`. El admin tiene una pestaña **Users** arriba a la derecha con cuántos
 usuarios hay, cuántas cuentas creó cada uno, cuántas están reportando y cuántas
 tienen el collector prendido — y el botón para darles o quitarles el acceso.
 
@@ -95,7 +99,7 @@ solos, para que un deploy no les corte los bots que están corriendo.
 
 ## Conectar una cuenta
 
-En el panel, **＋ Conectar cuenta** te da el token y el snippet ya armado (si
+En el panel, **＋ Connect account** te da el token y el snippet ya armado (si
 todavía no te habilitaron, ahí mismo dice que falta la aprobación). Es una sola
 línea, en el ejecutor:
 
@@ -245,7 +249,7 @@ Desde afuera del panel: `GET /api/fetch/stats` con el token del bot.
 - Todos los valores que llegan del bot se recortan y se acotan antes de tocar la
   base; los comandos pasan por una lista blanca con validador por tipo.
 - El token es lo único que separa un panel de otro: tratalo como una contraseña.
-  Si se filtró, **Rotar token**.
+  Si se filtró, **Rotate token**.
 
 ### Límites de uso
 

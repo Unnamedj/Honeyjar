@@ -13,7 +13,7 @@ fetchRouter.use(
         windowMs: 60 * 1000,
         max: 600,
         error: "demasiados_pedidos",
-        message: "Demasiados pedidos al pool desde esta IP.",
+        message: "Too many pool requests from this IP.",
     })
 );
 
