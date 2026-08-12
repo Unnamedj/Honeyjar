@@ -154,20 +154,37 @@ teleports, se come rate-limits y no suma un jar. Por eso el script trackea el
 evento y, con **Wait event** prendido (el default), **no junta ni hopea hasta
 que arranca**.
 
-Para saber si está corriendo mira tres cosas, en este orden:
+Para saberlo **no se le pregunta a ningún módulo del juego**: son todas lecturas
+pasivas de propiedades que ya están replicadas en el `workspace`. Ni un
+`require`, ni un remote, ni una invocación al server.
 
-1. **`ReplicatedStorage.Controllers.EventController`**, que es de donde el juego
-   maneja los eventos: tiene la lista `ActiveEvents` replicada y expone
-   `:IsActive("Bee")`. Es la fuente buena. `require()` sobre un módulo que el
-   juego ya cargó devuelve la misma tabla cacheada, no lo vuelve a correr.
-2. **La colmena**: el evento prende `workspace.Beehive.Active.ActiveNeon`
-   (`Transparency` 0 al arrancar, 1 al cortar). Sirve tanto para decir que sí
-   como para decir que no, y no depende de ningún módulo.
-3. **Jarras en el mapa**: ver una es prueba de que el evento corre. No verlas no
-   prueba nada (pueden estar todas juntadas), así que esta señal solo confirma
-   el sí, nunca el no.
+Eso último es una cicatriz. La versión anterior arrancaba por
+`ReplicatedStorage.Controllers.EventController`, que en el papel es la fuente
+buena (tiene `ActiveEvents` replicado y expone `:IsActive("Bee")`). El problema
+es que en un ejecutor `require()` **no** devuelve la copia que ya cargó el
+cliente: vuelve a correr el cuerpo del módulo, y ese cuerpo levanta
+`Synchronizer`, `ReplicatorClient` y `ReplicatorClient.get("EventManifests")` —
+un segundo cliente de replicación registrando canales contra el server. El
+cliente legítimo nunca hace eso dos veces, y el resultado era **kick**.
 
-Sin ninguna de las tres se asume apagado, que es el lado seguro: esperar de más
+Las señales que quedaron son las huellas que el propio evento deja en el mapa:
+
+1. **La colmena**: `OnStart` pone `workspace.Beehive.Active.ActiveNeon` en
+   `Transparency` 0, `OnStop` en 1. Es la única que es un booleano de verdad:
+   sirve tanto para decir que sí como para decir que no.
+2. **Las abejas**: el evento clona cada una como `Event Bee - <trait>` derecho
+   en `Workspace` y las destruye al cortar. Es la mejor prueba positiva —
+   siguen ahí aunque ya se hayan juntado todas las jarras, que es justo el
+   hueco que dejaban las otras señales. Se indexan con la misma conexión de
+   `DescendantAdded` que ya seguía a las jarras, así que no cuestan un barrido.
+3. **Los VFX de la colmena**: `OnStart` prende `Beehive.BeeHiveSpawnVFX`. Solo
+   confirma el sí. Con el Optimizer prendido no se consulta (esos emisores los
+   apagamos nosotros) — y por eso el Optimizer ahora deja la colmena afuera del
+   barrido, para no quedarse ciego.
+4. **Jarras en el mapa**: ver una es prueba de que el evento corre. No verlas no
+   prueba nada, así que también es solo para el sí.
+
+Sin ninguna señal se asume apagado, que es el lado seguro: esperar de más
 cuesta menos que hopear en vacío.
 
 Cada beat lleva el estado al panel, así que la tarjeta de la cuenta dice

@@ -74,7 +74,10 @@ local Hop = {}
 -- Config.WaitEvent prendido se queda quieto hasta que arranca. Se declara aca
 -- arriba porque el loop del collector -- que vive mucho antes que la GUI -- lo
 -- consulta; los metodos se asignan mas abajo, cuando ya existe ScanHoney.
-local Bee = { Active = false, Source = "-", CheckedAt = 0 }
+--
+-- `Models` indexa las abejas del evento que hay en el mapa; se llena desde la
+-- misma conexion de Workspace que indexa las jarras (ver TrackCandidate).
+local Bee = { Active = false, Source = "-", CheckedAt = 0, Models = { } }
 
 -- Optimizer (menos VFX = mas FPS con varias cuentas abiertas) y el HUD nuevo.
 -- Los dos se arman al final, con la GUI, pero se declaran aca por lo mismo.
@@ -989,8 +992,17 @@ end
 -- sale mas barato que rebarrer cada decima de segundo.
 local Tracked = { }
 
+-- El evento clona cada abeja como "Event Bee - <trait>" y la cuelga derecho de
+-- Workspace (createBeeModel en el modulo Bee del juego). Verlas es prueba de
+-- que el evento corre, y a diferencia de las jarras siguen ahi aunque ya se
+-- haya juntado todo -- por eso vale la pena indexarlas. Se aprovecha la misma
+-- conexion que ya recorre el Workspace en vez de abrir otra.
 local function TrackCandidate(Obj)
     if Tracked[Obj] then return end
+    if Obj:IsA("Model") and Obj.Name:sub(1, 11) == "Event Bee -" then
+        Bee.Models[Obj] = true
+        return
+    end
     if not (Obj:IsA("Model") or Obj:IsA("BasePart")) then return end
     if not IsHoney(Obj) then return end
     -- Un jar que es Model tiene sus partes adentro; quedarse con el padre evita
@@ -1004,7 +1016,10 @@ end
 for _, Obj in ipairs(Workspace:GetDescendants()) do TrackCandidate(Obj) end
 
 Workspace.DescendantAdded:Connect(TrackCandidate)
-Workspace.DescendantRemoving:Connect(function(Obj) Tracked[Obj] = nil end)
+Workspace.DescendantRemoving:Connect(function(Obj)
+    Tracked[Obj] = nil
+    Bee.Models[Obj] = nil
+end)
 
 local function ScanHoney()
     local Out = { }
@@ -1021,47 +1036,41 @@ end
 -- ============================================================
 -- EVENT TRACKER -- esta corriendo el evento Bee?
 -- ------------------------------------------------------------
--- El juego arranca y corta los eventos desde
--- ReplicatedStorage.Controllers.EventController: mantiene una lista
--- ActiveEvents replicada y expone :IsActive(nombre). Esa es la fuente buena y
--- la primera que se consulta -- require() sobre un ModuleScript que el juego ya
--- cargo devuelve la MISMA tabla cacheada, no lo vuelve a correr.
+-- TODO lo de aca abajo son lecturas PASIVAS del workspace: propiedades de
+-- instancias que ya estan replicadas. Ni un require, ni un remote, ni una
+-- invocacion al server.
 --
--- Si por lo que sea no se puede leer (el juego movio el modulo, el ejecutor
--- bloquea require), quedan dos senales de respaldo que salen del propio evento
--- Bee, que se ven en el mapa y no dependen de ningun modulo:
+-- Antes esto arrancaba pidiendole el estado a
+-- ReplicatedStorage.Controllers.EventController via require(). En el papel es
+-- la fuente buena (tiene ActiveEvents replicado y expone :IsActive), pero en un
+-- ejecutor require() NO devuelve la copia que ya cargo el cliente: vuelve a
+-- correr el cuerpo del modulo, y ese cuerpo levanta Synchronizer,
+-- ReplicatorClient y sobre todo ReplicatorClient.get("EventManifests") -- o sea,
+-- un SEGUNDO cliente de replicacion registrando canales contra el server. El
+-- cliente legitimo nunca hace eso dos veces, y el resultado era un kick.
+-- Por eso no se toca ningun modulo del juego, ni siquiera para leer.
 --
---   · La colmena. El evento prende workspace.Beehive.Active.ActiveNeon
---     (Transparency 0 al arrancar, 1 al cortar). Es un booleano de verdad:
---     sirve tanto para decir que si como para decir que no.
+-- Lo que queda son las huellas que el propio evento deja en el mapa. Del
+-- modulo Bee del juego (EventController.Events.Bee), OnStart/OnStop hacen:
+--
+--   · La colmena. OnStart pone workspace.Beehive.Active.ActiveNeon.Transparency
+--     en 0; OnStop y OnLoad la ponen en 1. Es un booleano de verdad: sirve
+--     tanto para decir que si como para decir que no.
+--   · Las abejas. createBeeModel clona cada una como "Event Bee - <trait>"
+--     derecho en Workspace, y clearVisuals las destruye al cortar. Es la mejor
+--     senal positiva: siguen ahi aunque ya se hayan juntado todas las jarras.
+--   · Los VFX de la colmena. OnStart hace VFX.enable(Beehive.BeeHiveSpawnVFX)
+--     y OnStop lo apaga. Solo se usa para confirmar el SI, porque no esta dicho
+--     que enable/disable sea siempre .Enabled de un ParticleEmitter.
 --   · Jarras en el mapa. Solo existen con el evento corriendo, asi que ver una
 --     es prueba de que esta activo -- pero NO verlas no prueba nada (pueden
---     estar todas juntadas), por eso solo se usa para confirmar el si.
+--     estar todas juntadas), por eso solo confirma el si.
 --
--- Sin ninguna de las tres, se asume apagado: es el lado seguro. Peor que
--- esperar de mas es hopear en vacio, que es justo lo que esto viene a evitar.
+-- Sin ninguna senal se asume apagado: es el lado seguro. Peor que esperar de
+-- mas es hopear en vacio, que es justo lo que esto viene a evitar.
 Bee.EVENT_NAME = "Bee"
 
-function Bee.Controller()
-    if Bee.__ctrl ~= nil then return Bee.__ctrl or nil end
-    local OK, Mod = pcall(function()
-        local Folder = ReplicatedStorage:FindFirstChild("Controllers")
-        local Module = Folder and Folder:FindFirstChild("EventController")
-        return Module and require(Module) or nil
-    end)
-    Bee.__ctrl = (OK and type(Mod) == "table" and Mod) or false
-    return Bee.__ctrl or nil
-end
-
 -- Cada fuente devuelve true, false o nil (= no se cuanto).
-function Bee.FromController()
-    local Ctrl = Bee.Controller()
-    if not Ctrl or type(Ctrl.IsActive) ~= "function" then return nil end
-    local OK, Active = pcall(function() return Ctrl:IsActive(Bee.EVENT_NAME) end)
-    if OK and type(Active) == "boolean" then return Active end
-    return nil
-end
-
 function Bee.FromHive()
     local Hive = Workspace:FindFirstChild("Beehive")
     local Active = Hive and Hive:FindFirstChild("Active")
@@ -1070,13 +1079,46 @@ function Bee.FromHive()
     return nil
 end
 
+-- Positiva y nada mas: no ver abejas puede ser streaming, no que el evento se
+-- corto. El indice lo mantiene TrackCandidate, asi que esto no barre nada.
+function Bee.FromBees()
+    for Obj in pairs(Bee.Models) do
+        if Obj.Parent then return true end
+        Bee.Models[Obj] = nil
+    end
+    return nil
+end
+
+-- Tambien positiva. Con el Optimizer prendido no se consulta: el que apago
+-- esos emisores fuimos nosotros, no el fin del evento (por eso ademas Boost
+-- deja la colmena afuera del barrido).
+function Bee.FromHiveVfx()
+    if Config.Optimizer then return nil end
+    local Hive = Workspace:FindFirstChild("Beehive")
+    local Vfx = Hive and Hive:FindFirstChild("BeeHiveSpawnVFX")
+    if not Vfx then return nil end
+    for _, Obj in ipairs(Vfx:GetDescendants()) do
+        if Obj:IsA("ParticleEmitter") and Obj.Enabled then return true end
+    end
+    return nil
+end
+
 function Bee.Refresh()
-    local Active, Source = Bee.FromController(), "EventController"
-    if Active == nil then Active, Source = Bee.FromHive(), "Beehive" end
+    local Active, Source = Bee.FromHive(), "colmena"
+
+    -- Cualquier prueba positiva gana sobre un "apagado" o un "no se": si hay
+    -- abejas o jarras dando vueltas, el evento corre y hay que juntar.
+    if Active ~= true then
+        if Bee.FromBees() then
+            Active, Source = true, "abejas en el mapa"
+        elseif #ScanHoney() > 0 then
+            Active, Source = true, "jarras en el mapa"
+        elseif Bee.FromHiveVfx() then
+            Active, Source = true, "VFX de la colmena"
+        end
+    end
+
     if Active == nil then Active, Source = false, "sin senal" end
-    -- Una jarra en el mapa gana sobre cualquier "apagado": si hay que juntar,
-    -- se junta, aunque la senal de arriba diga otra cosa.
-    if not Active and #ScanHoney() > 0 then Active, Source = true, "jarras en el mapa" end
     Bee.Active, Bee.Source, Bee.CheckedAt = Active, Source, os.clock()
     return Active
 end
@@ -2597,6 +2639,10 @@ function Boost.Allowed(Obj)
     while Node do
         if Node == Workspace then return true end
         if IsHoney(Node) then return false end
+        -- La colmena queda afuera: sus VFX son una de las senales con las que
+        -- se detecta el evento (ver Bee.FromHiveVfx). Es un solo modelo, no
+        -- mueve la aguja de los FPS, y apagarlo era quedarse ciego.
+        if Node.Name == "Beehive" then return false end
         if Node:IsA("Model") and Players:GetPlayerFromCharacter(Node) then return false end
         Node = Node.Parent
     end
