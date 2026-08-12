@@ -224,51 +224,21 @@ local function CleanFire(Remote, ...)
     return CallClean(Remote.FireServer, Remote, ...)
 end
 
--- El modulo Net del juego resuelve los remotes por nombre logico. Es la via que
--- usa el hub y la unica confiable: los nombres reales estan ofuscados y cambian.
-local NetBridge = { } do
-    local Module
-    local Attempts, LastAttempt = 0, 0
-
-    function NetBridge.Load()
-        if Module then return true end
-
-        local Now = os.clock()
-        if Attempts > 0 and (Now - LastAttempt) < 3 then return false end
-        LastAttempt = Now
-        Attempts = Attempts + 1
-
-        local Timeout = (Attempts == 1) and 5 or 0.5
-        local OK, Mod = pcall(function()
-            local Packages = ReplicatedStorage:WaitForChild("Packages", Timeout)
-            local Net = Packages and Packages:WaitForChild("Net", Timeout)
-            local Script = Net and Net:FindFirstChildWhichIsA("ModuleScript", true)
-            if not Script then return nil end
-            return CallClean(require, Script)
-        end)
-        if not OK or type(Mod) ~= "table" then return false end
-
-        Module = Mod
-        return true
-    end
-
-    function NetBridge.Get()
-        if not Module then NetBridge.Load() end
-        return Module
-    end
-end
-
-local NetModule
-local function LoadNet()
-    if NetModule then return true end
-    NetModule = NetBridge.Get()
-    return NetModule ~= nil
-end
-
--- Precalentado: resolver el modulo cuesta un WaitForChild de hasta 5s, y si eso
--- cae recien en el primer engage el gancho se dispara tarde o no se dispara.
-task.spawn(function() pcall(LoadNet) end)
-
+-- NO se hace require() de NINGUN modulo del juego, ni siquiera del paquete Net.
+--
+-- Antes habia un NetBridge que hacia require(ReplicatedStorage.Packages.Net)
+-- para resolver los remotes por nombre logico, y ademas lo REINTENTABA cada 3
+-- segundos desde FireGrapple/CarpetEngage mientras no resolviera. En un
+-- ejecutor require() no devuelve la copia que ya cargo el cliente: re-ejecuta
+-- el modulo. O sea que el script podia estar re-ejecutando el paquete Net del
+-- juego -- el mismo por el que el evento Bee resuelve EventService/Bee/* --
+-- una y otra vez, indefinidamente. Es la misma clase de problema que el
+-- require del EventController y la razon por la que se saco todo.
+--
+-- No se pierde nada: la huella dual-hash de abajo ya era el resolvedor
+-- PREFERIDO (es estructural y no depende de que el modulo Net funcione), y la
+-- posicional queda de ultimo respaldo. El modulo era solo el intermedio, y el
+-- menos confiable de los tres.
 local function IsHashName(Name)
     return type(Name) == "string" and Name:match("^R[EF]/%x%x%x%x%x%x%x%x") ~= nil
 end
@@ -336,29 +306,24 @@ local function FindUseItemByPosition()
     return nil
 end
 
--- Tres niveles, PERO la huella dual-hash va primero: es estructural (el hash
--- que existe como RE y RF a la vez SOLO puede ser UseItem) y no depende de
--- que el modulo Net funcione. El modulo Net solo confirma que el nombre
--- "parece" un hash (IsHashName) -- no que sea el UseItem real -- asi que si
--- devuelve CUALQUIER RemoteEvent con nombre hash (aunque sea el equivocado),
--- ValidUseItemRemote lo aceptaba igual y el hub quedaba disparando a un
--- remote que no es el gancho: se equipa, dispara, no pasa nada. sab_com.lua
--- prioriza dual-hash por la misma razon ("the game's own Net module hasher,
--- if it ever works again" -- ósea, no confiar en el primero).
+-- Dos niveles, y la huella dual-hash va primero: es estructural (el hash que
+-- existe como RE y RF a la vez SOLO puede ser UseItem), sale de mirar la forma
+-- de la carpeta y no depende de ningun modulo del juego. sab_com.lua la
+-- prioriza por la misma razon ("the game's own Net module hasher, if it ever
+-- works again" -- o sea, no confiar en el modulo).
+--
+-- El nivel del medio era preguntarle al modulo Net, y se fue con el require
+-- (ver arriba). Tampoco se extrana: solo confirmaba que el nombre "parece" un
+-- hash (IsHashName), no que fuera el UseItem real, asi que si devolvia
+-- CUALQUIER RemoteEvent con nombre hash -- aunque fuera el equivocado --
+-- ValidUseItemRemote lo aceptaba igual y el gancho quedaba disparandole a un
+-- remote que no era: se equipa, dispara, no pasa nada.
 local _UseItemCache
 local function FindUseItemRemote()
     if _UseItemCache and _UseItemCache.Parent then return _UseItemCache end
 
     local Dual = FindUseItemByDualHash()
     if Dual then _UseItemCache = Dual; return Dual end
-
-    if NetModule then
-        local OK, Remote = pcall(function() return NetModule:RemoteEvent("UseItem") end)
-        if OK and ValidUseItemRemote(Remote) then
-            _UseItemCache = Remote
-            return Remote
-        end
-    end
 
     local Positional = FindUseItemByPosition()
     if Positional then _UseItemCache = Positional; return Positional end
@@ -409,8 +374,6 @@ end
 local _GrappleWarned = false
 
 local function FireGrapple()
-    if not NetModule then task.spawn(function() pcall(LoadNet) end) end
-
     local Char = LocalPlayer.Character
     local Humanoid = Char and Char:FindFirstChildOfClass("Humanoid")
     if not Char or not Humanoid then return false end
@@ -459,8 +422,6 @@ end
 -- MoveToPosition (via task.spawn), asi que aca solo se espera a que el tiron
 -- registre (0.22s), se sueltan herramientas y se monta la carpet.
 local function CarpetEngage()
-    if not NetModule then task.spawn(function() pcall(LoadNet) end) end
-
     local Char = LocalPlayer.Character
     local Humanoid = Char and Char:FindFirstChildOfClass("Humanoid")
     if not Char or not Humanoid then return nil end
