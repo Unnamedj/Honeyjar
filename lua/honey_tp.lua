@@ -84,6 +84,181 @@ local Bee = { Active = false, Source = "-", CheckedAt = 0, Models = { } }
 local Boost = {}
 local HUD = {}
 
+-- Puente para llamar codigo del juego sin que se note que la llamada viene de
+-- afuera. Se llena justo abajo. Ver el bloque ENV LEAK.
+local Env = {}
+
+-- ============================================================
+-- ENV LEAK -- llamar al juego sin que la llamada se vea de afuera
+-- ------------------------------------------------------------
+-- Portado de honeymerchant.lua, que usa esta misma capa para requerir modulos
+-- del juego (Net incluido) sin comerse un kick.
+--
+-- El problema no es require() en si: es DESDE DONDE se lo llama. Una llamada
+-- cruda desde el ejecutor se delata por tres lados a la vez:
+--
+--   · el `require` del ejecutor suele venir envuelto y no pega en la cache
+--     real de Roblox, asi que RE-EJECUTA el modulo -- y con EventController eso
+--     significa levantar un segundo ReplicatorClient hablandole al server;
+--   · la identidad del hilo es la elevada del ejecutor (7/8), no la 2 de un
+--     LocalScript;
+--   · arriba de la llamada quedan nuestros frames, con el chunk name del
+--     loadstring, y un getfenv(nivel) desde el modulo los encuentra.
+--
+-- Env arma un espejo contra las tres: usa el require REAL del juego (que si
+-- pega en la cache y devuelve la MISMA tabla que ya tiene el cliente, sin
+-- re-ejecutar nada), presta el entorno de un LocalScript vivo, baja la
+-- identidad mientras dura la llamada, y hace nacer la llamada en un hilo
+-- aparte para que arriba del trampolin no haya un solo frame nuestro.
+--
+-- Todo best-effort: si el ejecutor no trae getrenv/getsenv/setfenv/
+-- setthreadidentity, cada capa se cae sola y el resto sigue andando.
+do
+    local GAME_IDENTITY = 2   -- la de un LocalScript
+    local CALL_TIMEOUT = 10
+
+    local RealEnv
+    pcall(function()
+        if type(getrenv) == "function" then RealEnv = getrenv() end
+    end)
+    if type(RealEnv) ~= "table" then RealEnv = nil end
+
+    -- El require del juego, no el del ejecutor: es el que usa la cache real.
+    local RealRequire = (RealEnv and rawget(RealEnv, "require")) or require
+
+    -- getsenv solo sirve con scripts que esten corriendo, y de afuera no hay
+    -- forma de saber cuales: se juntan candidatos y se prueban de a uno.
+    local Candidates, Seen = { }, { }
+    local function Absorb(Pool)
+        for _, Obj in ipairs(Pool) do
+            if #Candidates >= 12 then return end
+            local OK, IsLocal = pcall(function() return Obj:IsA("LocalScript") end)
+            if OK and IsLocal and not Seen[Obj] then
+                Seen[Obj] = true
+                table.insert(Candidates, Obj)
+            end
+        end
+    end
+    pcall(function()
+        if type(getrunningscripts) == "function" then Absorb(getrunningscripts()) end
+    end)
+    pcall(function()
+        local PS = LocalPlayer:FindFirstChildOfClass("PlayerScripts")
+        if PS then Absorb(PS:GetDescendants()) end
+    end)
+    pcall(function() Absorb(PlayerGui:GetDescendants()) end)
+
+    local Host = Candidates[1]
+    local Mirror, MirrorKind = nil, "ninguno"
+
+    -- Lo mejor: el entorno literal de un script del juego. Indistinguible
+    -- porque no es una imitacion, es uno de verdad.
+    if type(getsenv) == "function" then
+        for _, Script_ in ipairs(Candidates) do
+            local OK, Cand = pcall(getsenv, Script_)
+            if OK and type(Cand) == "table" then
+                Host, Mirror, MirrorKind = Script_, Cand, "prestado"
+                break
+            end
+        end
+    end
+
+    -- Respaldo: un entorno de LocalScript es exactamente esto -- una tabla con
+    -- `script` adentro y __index a las globales reales.
+    if not Mirror and RealEnv then
+        if Host then
+            Mirror, MirrorKind = setmetatable({ script = Host }, { __index = RealEnv }), "imitado"
+        else
+            Mirror, MirrorKind = RealEnv, "globales"
+        end
+    end
+
+    -- El trampolin: el unico frame Lua entre nosotros y el juego. Su entorno es
+    -- el espejo, asi que un getfenv que suba desde el modulo aterriza aca y ve
+    -- un LocalScript.
+    local Invoke = function(Fn, ...) return Fn(...) end
+
+    -- El cuerpo del hilo tambien es un frame sobre el juego, asi que lleva el
+    -- mismo entorno. Pack/Protect van como upvalues: setfenv no los toca, asi
+    -- el espejo puede ser cualquier cosa sin romper esto.
+    local Pack, Protect = table.pack, pcall
+    local Runner = function(Slot, Fn, ...)
+        Slot.Output = Pack(Protect(Invoke, Fn, ...))
+        Slot.Finished = true
+    end
+
+    local FenvOK = false
+    if type(setfenv) == "function" and type(Mirror) == "table" then
+        FenvOK = pcall(setfenv, Invoke, Mirror) and true or false
+        if FenvOK then pcall(setfenv, Runner, Mirror) end
+    end
+
+    local GetId, SetId
+    do
+        local function Pick(Getter, Setter)
+            if type(Getter) == "function" and type(Setter) == "function" then
+                GetId, SetId = Getter, Setter
+                return true
+            end
+            return false
+        end
+        local Syn = (type(syn) == "table") and syn or nil
+        local _ = Pick(getthreadidentity, setthreadidentity)
+            or Pick(getidentity, setidentity)
+            or Pick(get_thread_identity, set_thread_identity)
+            or (Syn ~= nil and Pick(Syn.get_thread_identity, Syn.set_thread_identity))
+    end
+    local IdOK = (GetId ~= nil and SetId ~= nil)
+
+    --- Corre Fn como si fuera un LocalScript del juego. Devuelve igual que
+    --- pcall: OK, resultados...
+    function Env.Call(Fn, ...)
+        -- Solo se baja la identidad si primero se pudo leer la vieja: si no, no
+        -- habria con que volver y el hilo se quedaria en 2 para siempre, sin
+        -- los privilegios del ejecutor.
+        local Previous
+        if IdOK then
+            local ReadOK = pcall(function() Previous = GetId() end)
+            if ReadOK and Previous ~= nil then
+                pcall(SetId, GAME_IDENTITY)
+            else
+                Previous = nil
+            end
+        end
+
+        -- El hilo nace con la identidad ya bajada: la hereda. Y como el modulo
+        -- puede ceder (WaitForChild, InvokeServer) se espera a que muera en vez
+        -- de confiar en lo que devuelve el resume; si no cede, el resume corre
+        -- entero de una y no se pierde ni un frame.
+        local Slot = { Finished = false }
+        local Thread = coroutine.create(Runner)
+        coroutine.resume(Thread, Slot, Fn, ...)
+
+        local Deadline = os.clock() + CALL_TIMEOUT
+        while not Slot.Finished and os.clock() < Deadline do
+            RunService.Heartbeat:Wait()
+        end
+
+        if Previous ~= nil then pcall(SetId, Previous) end
+
+        if not Slot.Finished then return false, "la llamada al juego no respondio" end
+        return table.unpack(Slot.Output, 1, Slot.Output.n)
+    end
+
+    --- require de un modulo del juego. Cachear no es solo velocidad: cada
+    --- require repetido es otro cruce hacia el juego.
+    local ModuleCache = { }
+    function Env.Require(Module)
+        local Cached = ModuleCache[Module]
+        if Cached ~= nil then return true, Cached end
+        local OK, Result = Env.Call(RealRequire, Module)
+        if OK then ModuleCache[Module] = Result end
+        return OK, Result
+    end
+
+    Env.Report = { Mirror = MirrorKind, Host = Host and Host.Name or nil, Fenv = FenvOK, Identity = IdOK }
+end
+
 -- ============================================================
 -- CONFIG
 -- ============================================================
@@ -997,22 +1172,24 @@ end
 -- ============================================================
 -- EVENT TRACKER -- esta corriendo el evento Bee?
 -- ------------------------------------------------------------
--- TODO lo de aca abajo son lecturas PASIVAS del workspace: propiedades de
--- instancias que ya estan replicadas. Ni un require, ni un remote, ni una
--- invocacion al server.
+-- Dos capas: la fuente autoritativa del juego, y las huellas que el evento
+-- deja en el mapa por si aquella no se puede leer.
 --
--- Antes esto arrancaba pidiendole el estado a
--- ReplicatedStorage.Controllers.EventController via require(). En el papel es
--- la fuente buena (tiene ActiveEvents replicado y expone :IsActive), pero en un
--- ejecutor require() NO devuelve la copia que ya cargo el cliente: vuelve a
--- correr el cuerpo del modulo, y ese cuerpo levanta Synchronizer,
--- ReplicatorClient y sobre todo ReplicatorClient.get("EventManifests") -- o sea,
--- un SEGUNDO cliente de replicacion registrando canales contra el server. El
--- cliente legitimo nunca hace eso dos veces, y el resultado era un kick.
--- Por eso no se toca ningun modulo del juego, ni siquiera para leer.
+-- LA AUTORITATIVA. ReplicatedStorage.Controllers.EventController mantiene
+-- ActiveEvents replicado y expone :IsActive("Bee"). Se llega a el con
+-- Env.Require, NUNCA con un require crudo (ver el bloque ENV LEAK arriba):
+-- crudo, el require del ejecutor no pega en la cache real y re-ejecuta el
+-- modulo, que levanta Synchronizer + ReplicatorClient y termina siendo un
+-- SEGUNDO cliente de replicacion hablandole al server -- eso es lo que
+-- kickeaba. Por Env se usa el require del juego, con identidad 2 y sin
+-- frames nuestros en la pila: devuelve la MISMA tabla que ya tiene el
+-- cliente, sin ejecutar nada de nuevo. Es la via que honeymerchant.lua usa
+-- en produccion sin problemas.
 --
--- Lo que queda son las huellas que el propio evento deja en el mapa. Del
--- modulo Bee del juego (EventController.Events.Bee), OnStart/OnStop hacen:
+-- LAS PASIVAS. Puro FindFirstChild y lectura de propiedades ya replicadas:
+-- no pueden kickear porque el server no se entera. Cubren el caso de que el
+-- ejecutor no traiga getrenv/getsenv/setthreadidentity y Env quede en nada.
+-- Del modulo Bee del juego (EventController.Events.Bee), OnStart/OnStop hacen:
 --
 --   · La colmena. OnStart pone workspace.Beehive.Active.ActiveNeon.Transparency
 --     en 0; OnStop y OnLoad la ponen en 1. Es un booleano de verdad: sirve
@@ -1031,7 +1208,35 @@ end
 -- mas es hopear en vacio, que es justo lo que esto viene a evitar.
 Bee.EVENT_NAME = "Bee"
 
+-- El modulo, resuelto una sola vez. false = ya se intento y no se pudo, para
+-- no reintentar el cruce en cada refresh.
+function Bee.Controller()
+    if Bee.__ctrl ~= nil then return Bee.__ctrl or nil end
+
+    local Folder = ReplicatedStorage:FindFirstChild("Controllers")
+    local Module = Folder and Folder:FindFirstChild("EventController")
+    if not Module then return nil end   -- todavia no llego: se reintenta luego
+
+    local OK, Mod = Env.Require(Module)
+    Bee.__ctrl = (OK and type(Mod) == "table" and Mod) or false
+    if Bee.__ctrl == false then
+        warn("[HONEY TP] event: no se pudo leer EventController, se usan las senales del mapa")
+    end
+    return Bee.__ctrl or nil
+end
+
 -- Cada fuente devuelve true, false o nil (= no se cuanto).
+function Bee.FromController()
+    local Ctrl = Bee.Controller()
+    if not Ctrl or type(Ctrl.IsActive) ~= "function" then return nil end
+    -- La llamada tambien va por Env: :IsActive baja a GetActiveEvents, que lee
+    -- la tabla del Synchronizer del juego. Son lecturas, pero corren adentro
+    -- del juego y no cuesta nada que lo hagan con la identidad correcta.
+    local OK, Active = Env.Call(Ctrl.IsActive, Ctrl, Bee.EVENT_NAME)
+    if OK and type(Active) == "boolean" then return Active end
+    return nil
+end
+
 function Bee.FromHive()
     local Hive = Workspace:FindFirstChild("Beehive")
     local Active = Hive and Hive:FindFirstChild("Active")
@@ -1065,7 +1270,9 @@ function Bee.FromHiveVfx()
 end
 
 function Bee.Refresh()
-    local Active, Source = Bee.FromHive(), "colmena"
+    -- Primero la del juego; si no se pudo leer, la colmena.
+    local Active, Source = Bee.FromController(), "EventController"
+    if Active == nil then Active, Source = Bee.FromHive(), "colmena" end
 
     -- Cualquier prueba positiva gana sobre un "apagado" o un "no se": si hay
     -- abejas o jarras dando vueltas, el evento corre y hay que juntar.

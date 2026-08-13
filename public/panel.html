@@ -209,16 +209,15 @@
 
             <ol class="steps">
                 <li>Open your executor on the account you want to connect.</li>
-                <li>Paste <strong>this before</strong> your collector script:</li>
+                <li>Paste the script you want to run. One line, nothing else needed:</li>
             </ol>
 
-            <pre class="snippet" id="snippet">…</pre>
-            <button class="btn btn--primary btn--sm" id="snippet-copy" style="margin-top:10px">
-                Copy the 3 lines
-            </button>
+            <!-- Una tarjeta por script habilitado; las arma panel.js desde el
+                 catálogo que manda /api/auth/me. -->
+            <div id="snippet-list"></div>
 
             <ol class="steps" start="3">
-                <li>Run the collector as usual. In a few seconds the account shows up here on its own,
+                <li>Run it as usual. The collector shows up here on its own in a few seconds,
                     with its avatar and its counter.</li>
                 <li>Repeat on every account. The same token on all of them: they split by Roblox user on their own.</li>
             </ol>

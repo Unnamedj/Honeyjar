@@ -32,8 +32,9 @@ castellano — son para quien lo mantiene, no para quien lo usa.
 - **KPI del evento Bee**: cuántas cuentas vivas están en un server con el evento
   corriendo. Si ese número es 0, el ritmo en cero no es un problema del bot.
 - **Pestaña Users**, solo para el admin: quién se registró, cuántas cuentas
-  tiene cada uno, cuántas están reportando ahora mismo — y el botón que les
-  habilita o les corta el loader.
+  tiene cada uno, cuántas están reportando ahora mismo — el botón que les
+  habilita o les corta el acceso, y un chip por script para decidir cuáles
+  puede usar cada uno.
 
 ---
 
@@ -104,13 +105,50 @@ falta esperar a que caduque ninguna sesión.
 Los usuarios que ya existían cuando se agregó todo esto quedan habilitados
 solos, para que un deploy no les corte los bots que están corriendo.
 
+### Permisos por script
+
+`approved` es la puerta general; arriba de eso, cada usuario tiene un permiso
+**por script**. En la pestaña Users hay un chip por cada uno (Collector,
+Merchant) y se prenden y apagan de a uno.
+
+Las reglas, en orden:
+
+- el **admin** puede todos, siempre — si no, podría dejarse sin nada;
+- **sin `approved` no puede ninguno**, tenga las filas que tenga: el permiso por
+  script afina la puerta general, no la reemplaza;
+- con fila en `user_scripts`, manda la fila;
+- **sin fila, manda el default del catálogo**: `collector` viene en `true` y
+  `merchant` en `false`. El collector es lo que ya estaba usando todo el mundo,
+  así que el deploy no le corta los bots a nadie; lo que se agregue de ahora en
+  más entra apagado y lo habilita el admin.
+
+El corte es real, no cosmético: sin el permiso del collector `/api/bot/*`
+contesta `403 collector_no_habilitado` en el beat siguiente, y la descarga del
+`.lua` devuelve `401`. El permiso se resuelve en la **misma consulta** que ya
+resolvía el token, así que no le agrega una query al beat.
+
 ---
+
+## Los scripts que reparte el hub
+
+Son dos, y cada uno se habilita por separado (ver *Quién entra*):
+
+| Script | Qué hace | Entrada |
+|---|---|---|
+| **Collector** | Junta las jarras del evento Bee y reporta al panel | `honey_hub.lua` |
+| **Merchant** | Compra selectiva y sniper del `BeeMerchantService` | `honey_merchant.lua` |
+
+El catálogo vive en un solo lugar, [`src/lib/scripts.js`](src/lib/scripts.js): de
+ahí salen las rutas que sirven los `.lua`, los toggles de la pestaña Users y los
+snippets del modal. Sumar un tercero es agregar una entrada.
 
 ## Conectar una cuenta
 
-En el panel, **＋ Connect account** te da el token y el snippet ya armado (si
-todavía no te habilitaron, ahí mismo dice que falta la aprobación). Es una sola
-línea, en el ejecutor:
+En el panel, **＋ Connect account** te da el token y **un snippet por cada script
+que tengas habilitado** (si todavía no te habilitaron, ahí mismo dice que falta
+la aprobación).
+
+**Collector** — una línea, en el ejecutor:
 
 ```lua
 loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_hub.lua?token=hh_..."))(
@@ -126,6 +164,15 @@ argumentos. El reporte a Railway y
 el control remoto ya vienen integrados en el collector — no hay un segundo
 paso ni un parche que pegar a mano (ver [`lua/PATCH.md`](lua/PATCH.md) si
 veniás de una versión anterior).
+
+**Merchant** — es autocontenido, así que va sin argumentos:
+
+```lua
+loadstring(game:HttpGet("https://tu-app.up.railway.app/honey_merchant.lua?token=hh_..."))()
+```
+
+El token acá sirve solo para bajarlo: el merchant no reporta al panel ni recibe
+comandos, corre solo con su propia GUI.
 
 El mismo token va en **todas** tus cuentas: se separan solas por usuario de
 Roblox. En unos segundos aparecen en el panel con su avatar y su contador,
@@ -154,20 +201,39 @@ teleports, se come rate-limits y no suma un jar. Por eso el script trackea el
 evento y, con **Wait event** prendido (el default), **no junta ni hopea hasta
 que arranca**.
 
-Para saberlo **no se le pregunta a ningún módulo del juego**: son todas lecturas
-pasivas de propiedades que ya están replicadas en el `workspace`. Ni un
-`require`, ni un remote, ni una invocación al server.
+La fuente buena es `ReplicatedStorage.Controllers.EventController`, que mantiene
+`ActiveEvents` replicado y expone `:IsActive("Bee")`. Se llega a él **siempre
+por `Env`**, nunca con un `require` crudo — y esa distinción es toda la
+historia de esta sección.
 
-Eso último es una cicatriz. La versión anterior arrancaba por
-`ReplicatedStorage.Controllers.EventController`, que en el papel es la fuente
-buena (tiene `ActiveEvents` replicado y expone `:IsActive("Bee")`). El problema
-es que en un ejecutor `require()` **no** devuelve la copia que ya cargó el
-cliente: vuelve a correr el cuerpo del módulo, y ese cuerpo levanta
-`Synchronizer`, `ReplicatorClient` y `ReplicatorClient.get("EventManifests")` —
-un segundo cliente de replicación registrando canales contra el server. El
-cliente legítimo nunca hace eso dos veces, y el resultado era **kick**.
+#### Por qué el `require` crudo kickeaba
 
-Las señales que quedaron son las huellas que el propio evento deja en el mapa:
+El problema nunca fue leer el evento: fue *desde dónde* se hacía la llamada. Una
+llamada cruda desde el ejecutor se delata por tres lados a la vez:
+
+- el `require` del ejecutor viene envuelto y **no pega en la caché real de
+  Roblox**, así que re-ejecuta el módulo. Con `EventController` eso significa
+  levantar `Synchronizer` + `ReplicatorClient` y terminar siendo un **segundo
+  cliente de replicación** hablándole al server;
+- la identidad del hilo es la elevada del ejecutor (7/8), no la **2** de un
+  `LocalScript`;
+- arriba de la llamada quedan nuestros frames, con el chunk name del
+  `loadstring`, y un `getfenv(nivel)` desde el módulo los encuentra.
+
+`Env` (en `honey_tp.lua`, portado de `honey_merchant.lua`) arma un espejo contra
+las tres: usa el `require` **real del juego** vía `getrenv`, presta el entorno de
+un `LocalScript` vivo con `getsenv`, baja la identidad a 2 mientras dura la
+llamada, y hace nacer la llamada en un hilo aparte para que arriba del trampolín
+no haya un solo frame nuestro. Con eso, `require` devuelve **la misma tabla que
+ya tiene el cliente** — no ejecuta nada de nuevo.
+
+Todo es best-effort: si el ejecutor no trae `getrenv`/`getsenv`/`setfenv`/
+`setthreadidentity`, cada capa se cae sola y quedan las señales pasivas.
+
+#### Las señales pasivas (respaldo)
+
+Puro `FindFirstChild` y lectura de propiedades ya replicadas: no pueden kickear
+porque el server no se entera. Son las huellas que el propio evento deja:
 
 1. **La colmena**: `OnStart` pone `workspace.Beehive.Active.ActiveNeon` en
    `Transparency` 0, `OnStop` en 1. Es la única que es un booleano de verdad:
@@ -179,13 +245,19 @@ Las señales que quedaron son las huellas que el propio evento deja en el mapa:
    `DescendantAdded` que ya seguía a las jarras, así que no cuestan un barrido.
 3. **Los VFX de la colmena**: `OnStart` prende `Beehive.BeeHiveSpawnVFX`. Solo
    confirma el sí. Con el Optimizer prendido no se consulta (esos emisores los
-   apagamos nosotros) — y por eso el Optimizer ahora deja la colmena afuera del
+   apagamos nosotros) — y por eso el Optimizer deja la colmena afuera del
    barrido, para no quedarse ciego.
 4. **Jarras en el mapa**: ver una es prueba de que el evento corre. No verlas no
    prueba nada, así que también es solo para el sí.
 
 Sin ninguna señal se asume apagado, que es el lado seguro: esperar de más
 cuesta menos que hopear en vacío.
+
+> El resolvedor del remote `UseItem` (el gancho) siguió el mismo camino: se le
+> sacó el `require` del paquete `Net`, que además se **reintentaba cada 3
+> segundos** desde cada engage. Queda la huella dual-hash — el hash que existe
+> como `RE` y `RF` a la vez solo puede ser `UseItem` — que es estructural y ya
+> era la vía preferida.
 
 Cada beat lleva el estado al panel, así que la tarjeta de la cuenta dice
 *Waiting for event* en vez de un *Idle* que parecería un bot roto — y el KPI de
@@ -367,8 +439,9 @@ Desde afuera del panel, con el token del bot: `GET /api/fetch/stats` para verlo,
 
 | Método | Ruta | Para qué |
 |---|---|---|
-| GET | `/api/admin/overview` | Usuarios, cuentas por usuario, cuántas vivas y cuántas corriendo |
-| POST | `/api/admin/users/:id/access` | `{approved: true\|false}` — da o saca el acceso al loader |
+| GET | `/api/admin/overview` | Usuarios, cuentas por usuario, cuántas vivas y cuántas corriendo, y el catálogo de scripts |
+| POST | `/api/admin/users/:id/access` | `{approved: true\|false}` — da o saca el acceso al hub |
+| POST | `/api/admin/users/:id/scripts` | `{script, allowed}` — habilita o corta UN script |
 
 ---
 
@@ -444,6 +517,7 @@ src/
   db.js              pool de Postgres + migración al arrancar
   schema.sql         esquema, idempotente
   lib/auth.js        bcrypt, JWT en cookie, requireUser y requireAdmin
+  lib/scripts.js     catalogo de scripts y quien puede usar cada uno
   lib/limit.js       límite de requests por ventana deslizante, en memoria
   lib/roblox.js      miniaturas de avatar con caché de 6 h
   routes/admin.js    usuarios del hub y quién tiene acceso al loader
@@ -461,9 +535,10 @@ public/
   css/style.css      sistema visual (tema oscuro único, deliberado)
   js/charts.js       gráficos en SVG a mano, sin librerías
   js/panel.js        estado, render y polling
-lua/                 (fuera de public/: no se sirven sin token)
+lua/                 (fuera de public/: no se sirven sin token ni sin permiso)
   honey_hub.lua      loader: descarga honey_tp.lua y lo arranca con (url, token)
   honey_tp.lua       el collector — movimiento, GUI, y el reporte a Railway integrado
+  honey_merchant.lua el merchant — compra y sniper del BeeMerchantService, autocontenido
   PATCH.md           notas para quien venía de la versión con parche manual
 ```
 

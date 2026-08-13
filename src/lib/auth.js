@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { one } from "../db.js";
+import { SCRIPTS } from "./scripts.js";
 
 const SECRET = process.env.SESSION_SECRET;
 if (!SECRET || SECRET.length < 16) {
@@ -34,7 +35,10 @@ export function newApiToken() {
  * headers en un GET.
  *
  * Devuelve la fila con `approved` ya resuelto (el admin cuenta como aprobado
- * siempre, aunque su fila diga lo contrario): quien llama decide si corta o no.
+ * siempre, aunque su fila diga lo contrario) y con `canCollector`, que es lo
+ * que mira /api/bot/*: quitarle el permiso del collector a alguien tiene que
+ * cortarle los beats, no solo esconderle el snippet. Va resuelto en la MISMA
+ * consulta y no en una aparte porque esto corre en cada beat de cada cuenta.
  */
 export async function resolveBotUser(req) {
     const header = req.get("authorization") ?? "";
@@ -42,11 +46,25 @@ export async function resolveBotUser(req) {
     const raw = bearer || req.body?.token || req.query?.token;
     const token = typeof raw === "string" ? raw.trim().slice(0, 80) : "";
     if (!token) return null;
-    return one(
-        `SELECT id, (approved OR id = (SELECT min(id) FROM users)) AS approved
-           FROM users WHERE api_token = $1`,
+
+    const row = await one(
+        `SELECT u.id,
+                (u.id = (SELECT min(id) FROM users))                AS is_admin,
+                (u.approved OR u.id = (SELECT min(id) FROM users))  AS approved,
+                s.allowed                                           AS collector
+           FROM users u
+           LEFT JOIN user_scripts s ON s.user_id = u.id AND s.script = 'collector'
+          WHERE u.api_token = $1`,
         [token]
     );
+    if (!row) return null;
+
+    return {
+        ...row,
+        canCollector: row.is_admin
+            ? true
+            : Boolean(row.approved) && (row.collector ?? SCRIPTS.collector.fallback),
+    };
 }
 
 /**

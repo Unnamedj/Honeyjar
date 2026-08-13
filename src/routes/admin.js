@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { one, query } from "../db.js";
 import { adminUserId, requireAdmin, requireUser } from "../lib/auth.js";
+import { SCRIPTS, allowedFor, isScriptKey } from "../lib/scripts.js";
 
 export const adminRouter = Router();
 adminRouter.use(requireUser, requireAdmin);
@@ -47,6 +48,16 @@ adminRouter.get("/overview", async (req, res) => {
           ORDER BY u.id`
     );
 
+    // Los permisos por script de todos, en una sola consulta: la pestana Users
+    // los pinta como toggles y son pocas filas (una por usuario y script que se
+    // haya tocado a mano; los que nunca se tocaron ni aparecen).
+    const perms = await query("SELECT user_id, script, allowed FROM user_scripts");
+    const byUser = new Map();
+    for (const row of perms.rows) {
+        if (!byUser.has(row.user_id)) byUser.set(row.user_id, []);
+        byUser.get(row.user_id).push(row);
+    }
+
     const adminId = await adminUserId();
     const users = rows.map((r) => ({
         id: r.id,
@@ -55,6 +66,10 @@ adminRouter.get("/overview", async (req, res) => {
         // cualquier cosa, el resto del server lo trata como aprobado igual.
         approved: r.approved || r.id === adminId,
         admin: r.id === adminId,
+        scripts: allowedFor(
+            { approved: r.approved, is_admin: r.id === adminId },
+            byUser.get(r.id) ?? []
+        ),
         accounts: r.accounts,
         online: r.online,
         running: r.running,
@@ -67,6 +82,13 @@ adminRouter.get("/overview", async (req, res) => {
     res.json({
         ok: true,
         now: Date.now(),
+        // El catalogo viaja con el overview para que el panel arme una columna
+        // por script sin tener la lista hardcodeada de su lado.
+        catalog: Object.entries(SCRIPTS).map(([key, meta]) => ({
+            key,
+            label: meta.label,
+            description: meta.description,
+        })),
         totals: {
             users: users.length,
             approved: users.filter((u) => u.approved).length,
@@ -102,4 +124,38 @@ adminRouter.post("/users/:id/access", async (req, res) => {
     // Sacar el acceso no espera al proximo login: el token deja de servir en el
     // beat siguiente porque /api/bot/* mira approved en cada request.
     res.json({ ok: true, user: { id: user.id, username: user.username, approved: user.approved } });
+});
+
+// ── /api/admin/users/:id/scripts: habilitar o cortar UN script ──────────────
+// Afina lo de arriba: `approved` es la puerta general (sin eso no corre nada),
+// esto decide cual de los scripts puede bajar y usar.
+adminRouter.post("/users/:id/scripts", async (req, res) => {
+    const id = Math.floor(Number(req.params.id));
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "id_invalido" });
+
+    const script = String(req.body?.script ?? "");
+    if (!isScriptKey(script)) return res.status(400).json({ error: "script_desconocido" });
+
+    if (typeof req.body?.allowed !== "boolean") {
+        return res.status(400).json({ error: "allowed_faltante" });
+    }
+
+    // Mismo criterio que con el acceso general: el admin no se puede recortar a
+    // si mismo. Ademas seria mentira -- el server lo trata como que puede todo.
+    if (id === req.user.id) return res.status(400).json({ error: "admin_no_se_bloquea" });
+
+    const user = await one("SELECT id FROM users WHERE id = $1", [id]);
+    if (!user) return res.status(404).json({ error: "usuario_no_encontrado" });
+
+    // Se escribe la fila aunque coincida con el default del catalogo: a partir
+    // de que el admin lo toca, la decision es explicita y deja de moverse si
+    // algun dia cambia el default.
+    await query(
+        `INSERT INTO user_scripts (user_id, script, allowed)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, script) DO UPDATE SET allowed = EXCLUDED.allowed`,
+        [id, script, req.body.allowed]
+    );
+
+    res.json({ ok: true, script, allowed: req.body.allowed });
 });

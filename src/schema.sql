@@ -147,6 +147,20 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS honey_anchor BIGINT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ALTER COLUMN approved SET DEFAULT false;
 
+-- Que scripts puede bajar y correr cada usuario. Una fila por (usuario,
+-- script); SIN fila manda el default del catalogo (src/lib/scripts.js), que
+-- para el collector es `true` -- es lo que ya usaba todo el mundo antes de que
+-- existieran estos permisos, y un deploy no puede cortarle los bots a nadie.
+--
+-- No reemplaza a users.approved: lo afina. Sin approved no corre nada, tenga
+-- las filas que tenga. Y el admin puede todo aunque no tenga ni una.
+CREATE TABLE IF NOT EXISTS user_scripts (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    script  TEXT    NOT NULL,
+    allowed BOOLEAN NOT NULL DEFAULT false,
+    PRIMARY KEY (user_id, script)
+);
+
 -- Tracker del evento. En las sesiones que ya existian arrancan en false y el
 -- primer beat del script las pone al dia.
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS event_active BOOLEAN NOT NULL DEFAULT false;

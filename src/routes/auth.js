@@ -9,6 +9,7 @@ import {
     requireUser,
 } from "../lib/auth.js";
 import { onlyFailures, rateLimit } from "../lib/limit.js";
+import { SCRIPTS, allowedFor } from "../lib/scripts.js";
 
 export const authRouter = Router();
 
@@ -153,8 +154,17 @@ authRouter.post("/logout", (req, res) => {
     res.json({ ok: true });
 });
 
-authRouter.get("/me", requireUser, (req, res) => {
+authRouter.get("/me", requireUser, async (req, res) => {
     const approved = req.user.approved || req.user.is_admin;
+
+    // Que scripts puede usar: el modal de conectar arma un snippet por cada uno
+    // habilitado. Esconderlos es comodidad, no seguridad -- la puerta esta en
+    // la ruta que sirve el .lua, que chequea el permiso en cada descarga.
+    const { rows } = await query(
+        "SELECT script, allowed FROM user_scripts WHERE user_id = $1",
+        [req.user.id]
+    );
+
     res.json({
         ok: true,
         user: {
@@ -166,7 +176,15 @@ authRouter.get("/me", requireUser, (req, res) => {
             createdAt: req.user.created_at,
             approved,
             admin: Boolean(req.user.is_admin),
+            scripts: allowedFor(req.user, rows),
         },
+        catalog: Object.entries(SCRIPTS).map(([key, meta]) => ({
+            key,
+            label: meta.label,
+            description: meta.description,
+            entry: meta.entry,
+            args: meta.args,
+        })),
     });
 });
 

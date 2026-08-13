@@ -13,6 +13,10 @@ const state = {
     // Sesion: si es el primer usuario (admin) y si tiene el loader habilitado.
     admin: false,
     approved: false,
+    // Catalogo de scripts del hub y cuales tiene habilitados este usuario. Los
+    // dos salen de /api/auth/me: el panel no tiene la lista hardcodeada.
+    catalog: [],
+    scripts: {},
     view: "dash",     // dash | admin
     adminData: null,
 };
@@ -614,6 +618,7 @@ function renderAdmin() {
                     <th scope="col">Honey</th>
                     <th scope="col">Last seen</th>
                     <th scope="col">Access</th>
+                    <th scope="col">Scripts</th>
                 </tr>
             </thead>
             <tbody>
@@ -631,6 +636,7 @@ function renderAdmin() {
                         <td>${fmt(u.honey)}</td>
                         <td>${ago(u.lastSeen)}</td>
                         <td>${accessCell(u)}</td>
+                        <td>${scriptsCell(u)}</td>
                     </tr>`
                     )
                     .join("")}
@@ -642,6 +648,17 @@ function renderAdmin() {
             setAccess(Number(button.dataset.access), button.dataset.to === "on", button)
         );
     }
+
+    for (const button of $("admin-users").querySelectorAll("[data-script]")) {
+        button.addEventListener("click", () =>
+            setScript(
+                Number(button.dataset.user),
+                button.dataset.script,
+                button.dataset.to === "on",
+                button
+            )
+        );
+    }
 }
 
 function accessCell(user) {
@@ -649,6 +666,50 @@ function accessCell(user) {
     return user.approved
         ? `<button class="btn btn--sm btn--danger" data-access="${user.id}" data-to="off">Revoke access</button>`
         : `<button class="btn btn--sm btn--primary" data-access="${user.id}" data-to="on">Grant access</button>`;
+}
+
+// Un chip por script. Prendido = ámbar, apagado = apagado; el texto dice cuál
+// es, así que el color repite el estado en vez de ser la única señal.
+//
+// Sin `approved` no se muestran toggles: el permiso por script afina la puerta
+// general, no la reemplaza, y ofrecer habilitar un script a alguien que igual
+// no puede entrar es prometer algo que el server no va a cumplir.
+function scriptsCell(user) {
+    if (user.admin) return '<span class="muted">all</span>';
+    if (!user.approved) return '<span class="muted">—</span>';
+
+    return (state.adminData?.catalog ?? [])
+        .map((script) => {
+            const on = Boolean(user.scripts?.[script.key]);
+            return `<button class="btn btn--sm ${on ? "btn--primary" : "btn--ghost"}"
+                data-script="${escapeHtml(script.key)}"
+                data-user="${user.id}"
+                data-to="${on ? "off" : "on"}"
+                title="${escapeHtml(script.description)}"
+                style="margin-right:4px">${on ? "✓" : "✕"} ${escapeHtml(script.label)}</button>`;
+        })
+        .join("");
+}
+
+async function setScript(userId, script, allowed, button) {
+    const previous = button.textContent;
+    button.disabled = true;
+    button.textContent = "…";
+    try {
+        const res = await fetch(`/api/admin/users/${userId}/scripts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ script, allowed }),
+        });
+        if (!res.ok) throw new Error("script");
+        await loadAdmin();
+    } catch {
+        button.textContent = "✕";
+        setTimeout(() => {
+            button.textContent = previous;
+            button.disabled = false;
+        }, 1200);
+    }
 }
 
 async function setAccess(userId, approved, button) {
@@ -693,14 +754,69 @@ function setView(view) {
 
 // ── modal de conexión ─────────────────────────────────────────
 
+async function copyTo(button, text, restore) {
+    try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied!";
+    } catch {
+        // El portapapeles necesita contexto seguro; sin https queda el
+        // seleccionar-y-copiar a mano, asi que al menos se avisa.
+        button.textContent = "Copy it by hand";
+    }
+    setTimeout(() => (button.textContent = restore), 1600);
+}
+
 // El token va tambien en la URL: el server no entrega el .lua sin el, asi que
-// el codigo del collector no queda colgado de un link publico.
-function snippetFor(token) {
+// el codigo de los scripts no queda colgado de un link publico.
+//
+// `args` distingue las dos formas: el collector entra por un loader que recibe
+// (url, token) para reportar y aceptar comandos; el merchant es autocontenido y
+// se ejecuta sin argumentos.
+function snippetFor(token, script) {
+    const url = `${location.origin}/${script.entry}?token=${encodeURIComponent(token)}`;
+    if (!script.args) return `loadstring(game:HttpGet("${url}"))()`;
     return [
-        `loadstring(game:HttpGet("${location.origin}/honey_hub.lua?token=${encodeURIComponent(token)}"))(`,
+        `loadstring(game:HttpGet("${url}"))(`,
         `    "${location.origin}", "${token}"`,
         `)`,
     ].join("\n");
+}
+
+// Solo los habilitados: el que no tenes no se muestra. Es comodidad, no
+// seguridad -- la puerta real esta en la ruta que sirve el .lua.
+function renderSnippets() {
+    const host = $("snippet-list");
+    const token = state.token;
+    const mine = state.catalog.filter((s) => state.scripts[s.key]);
+
+    if (!token || !mine.length) {
+        host.innerHTML =
+            '<p class="muted" style="font-size:12px">No scripts enabled for your account yet.</p>';
+        return;
+    }
+
+    host.innerHTML = mine
+        .map(
+            (script, i) => `
+            <div style="margin-top:${i ? 18 : 12}px">
+                <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">
+                    <strong style="font-size:13px">${escapeHtml(script.label)}</strong>
+                    <span class="muted" style="font-size:11px">${escapeHtml(script.description)}</span>
+                </div>
+                <pre class="snippet">${escapeHtml(snippetFor(token, script))}</pre>
+                <button class="btn btn--primary btn--sm" data-snippet="${escapeHtml(script.key)}"
+                        style="margin-top:8px">Copy</button>
+            </div>`
+        )
+        .join("");
+
+    // Sin onclick= en el HTML: la CSP no permite inline scripts (ver server.js).
+    for (const button of host.querySelectorAll("[data-snippet]")) {
+        button.addEventListener("click", () => {
+            const script = state.catalog.find((s) => s.key === button.dataset.snippet);
+            copyTo(button, snippetFor(state.token ?? "", script), "Copy");
+        });
+    }
 }
 
 function openConnectModal() {
@@ -708,7 +824,7 @@ function openConnectModal() {
     $("connect-open").hidden = !state.approved;
     $("connect-locked").hidden = state.approved;
     $("token-value").textContent = state.token ?? "…";
-    $("snippet").textContent = state.token ? snippetFor(state.token) : "…";
+    renderSnippets();
     $("connect-modal").hidden = false;
 }
 
@@ -722,24 +838,8 @@ function wireModal() {
         if (event.key === "Escape") $("connect-modal").hidden = true;
     });
 
-    const copyTo = async (button, text, restore) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            button.textContent = "Copied!";
-        } catch {
-            // El portapapeles necesita contexto seguro; sin https queda el
-            // seleccionar-y-copiar a mano, asi que al menos se avisa.
-            button.textContent = "Copy it by hand";
-        }
-        setTimeout(() => (button.textContent = restore), 1600);
-    };
-
     $("token-copy").addEventListener("click", (event) =>
         copyTo(event.target, state.token ?? "", "Copy")
-    );
-
-    $("snippet-copy").addEventListener("click", (event) =>
-        copyTo(event.target, snippetFor(state.token ?? ""), "Copy the 3 lines")
     );
 
     $("token-rotate").addEventListener("click", async () => {
@@ -810,10 +910,13 @@ async function boot() {
         location.replace("/");
         return;
     }
-    const user = (await me.json()).user;
+    const body = await me.json();
+    const user = body.user;
     state.token = user.apiToken;
     state.approved = Boolean(user.approved);
     state.admin = Boolean(user.admin);
+    state.catalog = body.catalog ?? [];
+    state.scripts = user.scripts ?? {};
 
     // La pestana de usuarios solo existe para el admin.
     $("views").hidden = !state.admin;
