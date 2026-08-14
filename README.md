@@ -228,7 +228,43 @@ no haya un solo frame nuestro. Con eso, `require` devuelve **la misma tabla que
 ya tiene el cliente** — no ejecuta nada de nuevo.
 
 Todo es best-effort: si el ejecutor no trae `getrenv`/`getsenv`/`setfenv`/
-`setthreadidentity`, cada capa se cae sola y quedan las señales pasivas.
+`setthreadidentity`, cada capa se cae sola. El problema es que de las cuatro,
+**una sola realmente evita el kick** — las otras tres son maquillaje sobre la
+pila, útiles pero no la causa raíz.
+
+#### El bug del bug: nadie chequeaba si `Env` había funcionado
+
+`Fenv` e `Identity` tapan que la llamada vino de afuera *si algo camina la
+pila*. Lo que evita que el módulo se re-ejecute — y con eso, el kick — es
+una sola cosa: que `RealRequire` sea el `require` **del juego** (el que pega
+en su caché real), no el del ejecutor. Y eso depende únicamente de que
+`getrenv()` haya funcionado:
+
+```lua
+local RealRequire = (RealEnv and rawget(RealEnv, "require")) or require
+```
+
+Si el ejecutor no expone `getrenv`, `RealEnv` queda `nil` y esa línea cae en
+silencio al `or require` — el mismo `require` que re-ejecuta el módulo. `Env`
+seguía llamándose exactamente igual, como si estuviera protegido, sin que
+nada lo notara. Con un ejecutor sin `getrenv` (algunos móviles traen una
+superficie más chica que un Synapse o un Script-Ware de escritorio), el kick
+sobrevivía al parche entero — no porque la lógica estuviera mal, sino porque
+una asunción que nadie verificaba resultó falsa.
+
+`Env.Safe = (RealEnv ~= nil)` es esa verificación. `Bee.Controller()` y
+`Grapple.Refs()` la miran **antes** de llamar a `Env.Require` sobre un módulo
+del juego: sin `Env.Safe`, ni lo intentan — van derecho a las señales pasivas
+(o, en el caso del gancho, al barrido de heap, que no requiere nada y por eso
+no necesita el gate). Al arrancar, la consola imprime el diagnóstico:
+
+```
+[HONEY TP] Env: mirror=prestado realRequire=true fenv=true identity=true
+```
+
+Si `realRequire=false`, es la confirmación de que ese ejecutor no puede dar
+la protección real y el script ya está corriendo en modo pasivo — no hay
+ambigüedad para diagnosticar la próxima vez.
 
 #### Las señales pasivas (respaldo)
 

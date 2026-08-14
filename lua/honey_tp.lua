@@ -256,7 +256,36 @@ do
         return OK, Result
     end
 
-    Env.Report = { Mirror = MirrorKind, Host = Host and Host.Name or nil, Fenv = FenvOK, Identity = IdOK }
+    -- Lo que de verdad evita el kick no es fenv ni la identidad -- esas dos
+    -- capas solo tapan que la llamada vino de afuera si algo camina la pila.
+    -- Lo que evita el kick es que RealRequire sea el require DEL JUEGO (el que
+    -- pega en su cache real) y no el del ejecutor (que re-ejecuta el modulo).
+    -- Eso depende de una sola cosa: que getrenv() haya funcionado. Si el
+    -- ejecutor no lo trae, RealRequire cae en silencio al require de siempre
+    -- (linea de arriba: "or require") y Env.Require deja de estar protegido --
+    -- pero seguia llamandose igual, como si lo estuviera. Eso es lo que
+    -- explica un kick que sobrevive al parche: no fallaba la logica, fallaba
+    -- una asuncion que nada verificaba.
+    --
+    -- Env.Safe es esa verificacion. Bee.Controller y Grapple.Refs la miran
+    -- ANTES de llamar a Env.Require sobre un modulo del juego: sin ella, ni
+    -- lo intentan.
+    Env.Safe = (RealEnv ~= nil)
+
+    Env.Report = {
+        Mirror = MirrorKind,
+        Host = Host and Host.Name or nil,
+        Fenv = FenvOK,
+        Identity = IdOK,
+        RealRequire = Env.Safe,
+    }
+
+    print(
+        ("[HONEY TP] Env: mirror=%s realRequire=%s fenv=%s identity=%s%s"):format(
+            MirrorKind, tostring(Env.Safe), tostring(FenvOK), tostring(IdOK),
+            Env.Safe and "" or "  -- SIN getrenv: EventController y el mouse del gancho quedan en modo pasivo"
+        )
+    )
 end
 
 -- ============================================================
@@ -466,8 +495,11 @@ end
 --- la OTRA. Ellos lo resuelven barriendo el heap.
 ---
 --- Nosotros pedimos primero la del juego con Env.Require (ver ENV LEAK), que es
---- exactamente la que el HookScript lee, y dejamos el barrido como respaldo por
---- si el ejecutor no da para tanto. Se cachea: el barrido no es gratis.
+--- exactamente la que el HookScript lee -- pero solo si Env.Safe confirmo que
+--- hay un require real por detras (getrenv funciono). Sin eso, ese require
+--- seria el del ejecutor de siempre, y directamente no se llama: se salta al
+--- barrido del heap, que no re-ejecuta nada porque no requiere nada.
+--- Se cachea: el barrido no es gratis.
 function Grapple.Refs()
     if Grapple.__refs then return Grapple.__refs end
 
@@ -479,13 +511,15 @@ function Grapple.Refs()
         end
     end
 
-    pcall(function()
-        local Packages = ReplicatedStorage:FindFirstChild("Packages")
-        local Module = Packages and Packages:FindFirstChild("PlayerMouse")
-        if not Module then return end
-        local OK, Mod = Env.Require(Module)
-        if OK then Juntar(Mod) end
-    end)
+    if Env.Safe then
+        pcall(function()
+            local Packages = ReplicatedStorage:FindFirstChild("Packages")
+            local Module = Packages and Packages:FindFirstChild("PlayerMouse")
+            if not Module then return end
+            local OK, Mod = Env.Require(Module)
+            if OK then Juntar(Mod) end
+        end)
+    end
 
     pcall(function()
         if type(getgc) ~= "function" then return end
@@ -1310,10 +1344,24 @@ end
 -- mas es hopear en vacio, que es justo lo que esto viene a evitar.
 Bee.EVENT_NAME = "Bee"
 
--- El modulo, resuelto una sola vez. false = ya se intento y no se pudo, para
--- no reintentar el cruce en cada refresh.
+-- El modulo, resuelto una sola vez. false = ya se intento (o ni se intento
+-- porque Env no esta protegido) y no se pudo, para no reintentar el cruce en
+-- cada refresh.
 function Bee.Controller()
     if Bee.__ctrl ~= nil then return Bee.__ctrl or nil end
+
+    -- Sin Env.Safe, RealRequire seria el require del ejecutor -- el que
+    -- re-ejecuta el modulo y kickea. Ni se intenta: se cae derecho a las
+    -- senales pasivas, que es el mismo resultado que "no se pudo leer" mas
+    -- abajo pero sin arriesgar nada.
+    if not Env.Safe then
+        Bee.__ctrl = false
+        if not Bee.__warnedUnsafe then
+            Bee.__warnedUnsafe = true
+            warn("[HONEY TP] event: este ejecutor no da getrenv -- EventController queda sin tocar, solo senales del mapa")
+        end
+        return nil
+    end
 
     local Folder = ReplicatedStorage:FindFirstChild("Controllers")
     local Module = Folder and Folder:FindFirstChild("EventController")
