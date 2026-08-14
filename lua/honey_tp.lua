@@ -3512,8 +3512,21 @@ if HubBaseUrl ~= "" and HubToken ~= "" then
 
         -- Aviso de cierre: sin esto la cuenta queda "online" en el panel hasta
         -- que vence la ventana de inactividad.
-        game:BindToClose(function()
-            pcall(HubHttpPost, "/api/bot/bye", { token = HubToken, client = HubClientId })
+        --
+        -- game:BindToClose SOLO corre en scripts de servidor -- desde un
+        -- script inyectado (que para este chequeo cuenta como LocalScript)
+        -- SIEMPRE tira "BindToClose can only be called on the server.". Sin
+        -- pcall eso no era un aviso: cortaba la ejecucion del chunk principal
+        -- ahi mismo, y la conexion de OnTeleport de abajo -- que es la que de
+        -- verdad importa en un juego con auto-hop -- nunca llegaba a
+        -- registrarse. honey_hub.lua lo reportaba como "the collector failed
+        -- to start", pero para entonces los task.spawn de arriba (el loop de
+        -- beat incluido) ya habian arrancado y seguian corriendo solos: era
+        -- una falsa alarma que de paso tapaba un bug real.
+        pcall(function()
+            game:BindToClose(function()
+                pcall(HubHttpPost, "/api/bot/bye", { token = HubToken, client = HubClientId })
+            end)
         end)
 
         LocalPlayer.OnTeleport:Connect(function(State)
