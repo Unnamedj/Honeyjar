@@ -382,140 +382,11 @@ local function EquipCarpet()
     return nil
 end
 
--- El FireServer sale del entorno real del juego, no del del script. Es el mismo
--- CallClean del hub y es lo que evita que el remote se vea disparado desde afuera.
-local CallClean = function(Fn, ...) return Fn(...) end
-do
-    local RealEnv
-    pcall(function()
-        if type(getrenv) == "function" then RealEnv = getrenv() end
-    end)
-    if type(setfenv) == "function" and type(RealEnv) == "table" then
-        pcall(setfenv, CallClean, RealEnv)
-    end
-end
-
-local function CleanFire(Remote, ...)
-    return CallClean(Remote.FireServer, Remote, ...)
-end
-
--- NO se hace require() de NINGUN modulo del juego, ni siquiera del paquete Net.
---
--- Antes habia un NetBridge que hacia require(ReplicatedStorage.Packages.Net)
--- para resolver los remotes por nombre logico, y ademas lo REINTENTABA cada 3
--- segundos desde FireGrapple/CarpetEngage mientras no resolviera. En un
--- ejecutor require() no devuelve la copia que ya cargo el cliente: re-ejecuta
--- el modulo. O sea que el script podia estar re-ejecutando el paquete Net del
--- juego -- el mismo por el que el evento Bee resuelve EventService/Bee/* --
--- una y otra vez, indefinidamente. Es la misma clase de problema que el
--- require del EventController y la razon por la que se saco todo.
---
--- No se pierde nada: la huella dual-hash de abajo ya era el resolvedor
--- PREFERIDO (es estructural y no depende de que el modulo Net funcione), y la
--- posicional queda de ultimo respaldo. El modulo era solo el intermedio, y el
--- menos confiable de los tres.
-local function IsHashName(Name)
-    return type(Name) == "string" and Name:match("^R[EF]/%x%x%x%x%x%x%x%x") ~= nil
-end
-
--- "RE/UseItem" en texto plano puede ser un alias muerto -- el remote real esta
--- detras de un nombre con hash que rota por server. Confirmarlo por nombre evita
--- confiar en una instancia que existe pero no hace nada.
-local function ValidUseItemRemote(Obj)
-    return typeof(Obj) == "Instance" and Obj:IsA("RemoteEvent") and IsHashName(Obj.Name)
-end
-
--- Huella estructural: "UseItem" es el unico nombre que el juego registra como
--- RF y RE a la vez, asi que el hash que aparece en ambos ES UseItem. No depende
--- de orden ni de que el modulo Net funcione -- solo de la forma de la carpeta,
--- por eso sobrevive a que la rotacion de hash o el modulo Net se rompan.
-local _DualHashCache
-local function FindUseItemByDualHash()
-    if _DualHashCache and _DualHashCache.Parent then return _DualHashCache end
-
-    local OK, Net = pcall(function()
-        local Packages = ReplicatedStorage:WaitForChild("Packages", 5)
-        return Packages and Packages:WaitForChild("Net", 5)
-    end)
-    if not OK or not Net then return nil end
-
-    local ReByHash, RfByHash = { }, { }
-    for _, Obj in ipairs(Net:GetChildren()) do
-        local Prefix, Hash = Obj.Name:match("^(R[EF])/(%x%x%x%x%x%x%x%x.*)$")
-        if Prefix == "RE" then ReByHash[Hash] = Obj
-        elseif Prefix == "RF" then RfByHash[Hash] = Obj end
-    end
-
-    local Found, Count = nil, 0
-    for Hash, Obj in pairs(ReByHash) do
-        if RfByHash[Hash] then Count = Count + 1; Found = Obj end
-    end
-
-    if Count == 1 then
-        _DualHashCache = Found
-        return Found
-    end
-    return nil
-end
-
--- Ultimo respaldo si ni el modulo Net ni la huella dual resuelven: la posicion
--- relativa a "RE/UseItem" en la carpeta. Rompe si una actualizacion reordena la
--- carpeta, por eso va al final.
-local function FindUseItemByPosition()
-    local OK, Net = pcall(function()
-        local Packages = ReplicatedStorage:WaitForChild("Packages", 5)
-        return Packages and Packages:WaitForChild("Net", 5)
-    end)
-    if not OK or not Net then return nil end
-
-    local Children = Net:GetChildren()
-    for I, Obj in ipairs(Children) do
-        if Obj:IsA("RemoteEvent") and Obj.Name ~= "RE/UseItem" then
-            local NextObj = Children[I + 1]
-            if NextObj and NextObj.Name == "RE/UseItem" then return Obj end
-        end
-    end
-    for _, Obj in ipairs(Children) do
-        if ValidUseItemRemote(Obj) then return Obj end
-    end
-    return nil
-end
-
--- Dos niveles, y la huella dual-hash va primero: es estructural (el hash que
--- existe como RE y RF a la vez SOLO puede ser UseItem), sale de mirar la forma
--- de la carpeta y no depende de ningun modulo del juego. sab_com.lua la
--- prioriza por la misma razon ("the game's own Net module hasher, if it ever
--- works again" -- o sea, no confiar en el modulo).
---
--- El nivel del medio era preguntarle al modulo Net, y se fue con el require
--- (ver arriba). Tampoco se extrana: solo confirmaba que el nombre "parece" un
--- hash (IsHashName), no que fuera el UseItem real, asi que si devolvia
--- CUALQUIER RemoteEvent con nombre hash -- aunque fuera el equivocado --
--- ValidUseItemRemote lo aceptaba igual y el gancho quedaba disparandole a un
--- remote que no era: se equipa, dispara, no pasa nada.
-local _UseItemCache
-local function FindUseItemRemote()
-    if _UseItemCache and _UseItemCache.Parent then return _UseItemCache end
-
-    local Dual = FindUseItemByDualHash()
-    if Dual then _UseItemCache = Dual; return Dual end
-
-    local Positional = FindUseItemByPosition()
-    if Positional then _UseItemCache = Positional; return Positional end
-
-    return nil
-end
-
--- Precalentar la huella dual en background: la carpeta Net puede seguir
--- llegando por streaming cuando el primer TP se dispara, y sin esto el
--- primer intento cae al modulo Net (menos confiable) o falla del todo.
-task.spawn(function()
-    local T0 = os.clock()
-    while os.clock() - T0 < 60 do
-        if FindUseItemByDualHash() then return end
-        task.wait(0.25)
-    end
-end)
+-- El resolver del remote UseItem (dual-hash / posicional) vivia aca y se fue
+-- entero: el gancho ya NO dispara ningun remote. Lo activa el propio
+-- HookScript del juego via tool:Activate(), asi que no hay nada que resolver
+-- -- ver el bloque GRAPPLE mas abajo. Con el se fueron tambien CallClean y
+-- CleanFire, que no tenian otro uso, y las ultimas lecturas de la carpeta Net.
 
 local function OnCarpet()
     local Char = LocalPlayer.Character
@@ -526,12 +397,56 @@ local function OnCarpet()
     return false
 end
 
--- La firma real, confirmada en el hub de referencia (sab_com.lua, resolver
--- dual-hash + comentario explicito "the arg is a FLOAT, NOT the old int 2"):
--- UseItem se dispara con UN SOLO escalar float, sin posicion apuntada. El hub
--- real jamas calcula distancia ni apunta: siempre manda la misma constante
--- (0.33 por defecto, ajustable).
-local GRAPPLE_VALUE = tonumber(G.honeyTPGrappleValue) or 0.33
+-- ============================================================
+-- GRAPPLE -- portado del hub de referencia (hub.txt, _G.SXEFireGrapple2 /
+-- __SXEGrappleDisparar). Copiado tal cual, con las jarras como objetivo.
+-- ------------------------------------------------------------
+-- ANTES ESTO NO HACIA NADA. Se disparaba el remote UseItem con un escalar
+-- suelto (FireServer(0.33)), creyendo -- por un comentario de sab_com.lua, una
+-- version vieja de la referencia -- que esa era la firma. El hub nuevo
+-- documenta que no:
+--
+--   "O hub mandava so o primeiro -- um 0.33 solto, sem posicao e sem peca
+--    alvo -- e o servidor nao tinha como saber pra onde puxar. Dai o silencio."
+--
+-- Mandar los tres argumentos reales (Magnitude/120, Hit.Position, alvo, que es
+-- lo que hacen los items hermanos en texto claro) tampoco alcanza: el
+-- HookScript de la Grapple esta ofuscado con Luraph y su firma no es la misma.
+--
+-- Lo que SI funciona es no tocar el remote y hacer que el script del juego arme
+-- la llamada solo:
+--
+--   1. se elige un punto del piso en direccion al objetivo, entre 10 y 50
+--      studs (la franja que el item acepta);
+--   2. se le escribe Hit/Target al PlayerMouse;
+--   3. se gira la camara para que el rayo del cursor apunte a ese punto -- el
+--      HookScript arma su rayo con GetMouseLocation() + camara;
+--   4. se llama tool:Activate() EN EL MISMO FRAME, sin un solo yield en el
+--      medio: el modulo recalcula la mira en cada PreRender y pisaria lo
+--      escrito.
+--
+-- Va todo en una tabla y no como funciones sueltas por el tope de 200 locales
+-- del chunk (ver el comentario de `Hop` arriba).
+local Grapple = { }
+
+-- La franja que el item exige. Afuera de esto no dispara.
+local GRAPPLE_MIN, GRAPPLE_MAX = 10, 50
+
+-- Distancias a las que se busca piso, en direccion al objetivo. Se prueban
+-- TODAS y gana la MAS CERCANA que caiga en la franja -- el hub aclara que
+-- quedarse con la primera valida barriendo de lejos a cerca terminaba eligiendo
+-- casi siempre la mas lejana.
+local GRAPPLE_STEPS = { 9, 10, 11, 12, 13, 14, 16, 18, 21, 24, 28, 32, 36, 40, 45 }
+-- Sin piso en ningun lado (volando, un pozo): rayo recto en la direccion pedida.
+local GRAPPLE_STRAIGHT = { 11, 14, 18, 24, 32, 42, 48 }
+
+-- Entre el hook y el vuelo. NO puede ser cero: Activate() solo ENCOLA el
+-- handler (Roblox usa SignalBehavior = Deferred), asi que en el frame del
+-- disparo el script del item todavia ni corrio. Y si el vuelo arranca antes,
+-- lo primero que hace es equipar la carpet -- que SACA la Grapple Hook de la
+-- mano; cuando el handler por fin corre, testea Tool.Name == "Grapple Hook",
+-- no la encuentra, y se va sin disparar.
+local GRAPPLE_TO_TP = 0.12
 
 -- El gancho tiene cooldown propio del juego: no vuelve a activarse antes de
 -- ~3s de la ultima vez. Smart TP usa esto para decidir si puede tirar de el
@@ -543,54 +458,236 @@ local function GrappleReady()
     return (os.clock() - LastGrappleFire) >= GRAPPLE_COOLDOWN
 end
 
--- Disparo del gancho, aislado del engage. El hub de referencia lo llama APENAS
--- resuelve el objetivo -- antes de armar nada del movimiento -- justamente para
--- que el tiron del servidor arranque mientras el resto se prepara.
-local _GrappleWarned = false
+--- Las tablas con forma de PlayerMouse a las que hay que escribirles la mira.
+---
+--- Son varias y no una: el hub explica que el require del ejecutor tiene cache
+--- propio, asi que devuelve una tabla NUEVA que tambien se conecta al PreRender
+--- y tambien tiene valores vivos -- parece la correcta, pero el HookScript lee
+--- la OTRA. Ellos lo resuelven barriendo el heap.
+---
+--- Nosotros pedimos primero la del juego con Env.Require (ver ENV LEAK), que es
+--- exactamente la que el HookScript lee, y dejamos el barrido como respaldo por
+--- si el ejecutor no da para tanto. Se cachea: el barrido no es gratis.
+function Grapple.Refs()
+    if Grapple.__refs then return Grapple.__refs end
 
-local function FireGrapple()
-    local Char = LocalPlayer.Character
-    local Humanoid = Char and Char:FindFirstChildOfClass("Humanoid")
-    if not Char or not Humanoid then return false end
-
-    if not Char:FindFirstChild("Grapple Hook") then
-        local Grapple = FindTool("Grapple Hook")
-        if not Grapple then
-            warn("[HONEY TP] Grapple: no 'Grapple Hook' in character or backpack")
-            return false
+    local Refs, Vistos = { }, { }
+    local function Juntar(T)
+        if type(T) == "table" and not Vistos[T] then
+            Vistos[T] = true
+            Refs[#Refs + 1] = T
         end
-        pcall(function() Humanoid:EquipTool(Grapple) end)
-        -- Esperar a que el equip realmente registre (el tool aparece como hijo
-        -- del char) en vez de un task.wait fijo, que pierde la carrera al
-        -- primer TP de la sesion.
-        local WaitStart = os.clock()
-        while not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Grapple Hook"))
-            and os.clock() - WaitStart < 0.5 do
+    end
+
+    pcall(function()
+        local Packages = ReplicatedStorage:FindFirstChild("Packages")
+        local Module = Packages and Packages:FindFirstChild("PlayerMouse")
+        if not Module then return end
+        local OK, Mod = Env.Require(Module)
+        if OK then Juntar(Mod) end
+    end)
+
+    pcall(function()
+        if type(getgc) ~= "function" then return end
+        for _, V in ipairs(getgc(true)) do
+            if type(V) == "table" and typeof(rawget(V, "Hit")) == "CFrame" then
+                local N = 0
+                for _ in pairs(V) do N = N + 1 end
+                if N <= 3 then Juntar(V) end
+            end
+        end
+    end)
+
+    Grapple.__refs = Refs
+    return Refs
+end
+
+--- El disparo en si (= __SXEGrappleDisparar). Escribe la mira, gira la camara y
+--- activa la tool, todo en el mismo frame. Despues sostiene los valores 4
+--- frames -- el modulo los recalcula en cada PreRender -- y restaura.
+function Grapple.Shoot(Tool, Pos, Alvo)
+    local Refs = Grapple.Refs()
+
+    -- La camara: el HookScript arma el rayo desde GetMouseLocation() + camara,
+    -- asi que se la gira de modo que el rayo del cursor -- este donde este --
+    -- apunte a nuestro punto.
+    local Cam = Workspace.CurrentCamera
+    local CamAntes = Cam and Cam.CFrame
+    local CamNueva
+    if Cam then
+        pcall(function()
+            local M = UserInputService:GetMouseLocation()
+            local Rayo = Cam:ViewportPointToRay(M.X, M.Y)
+            local L = Cam.CFrame:VectorToObjectSpace(Rayo.Direction).Unit
+            local D = Pos - Cam.CFrame.Position
+            if D.Magnitude > 0.01 then
+                D = D.Unit
+                CamNueva = CFrame.new(Cam.CFrame.Position)
+                    * (CFrame.lookAt(Vector3.zero, D) * CFrame.lookAt(Vector3.zero, L):Inverse())
+            end
+        end)
+    end
+
+    local Mira = CFrame.new(Pos)
+    local Antes = { }
+    for I, T in ipairs(Refs) do
+        Antes[I] = { rawget(T, "Hit"), rawget(T, "Target") }
+        pcall(function() T.Hit = Mira; T.Target = Alvo end)
+    end
+    if CamNueva then Cam.CFrame = CamNueva end
+
+    local OK = pcall(function() Tool:Activate() end)
+    if not OK and typeof(firesignal) == "function" then
+        OK = pcall(function() firesignal(Tool.Activated) end)
+    end
+
+    task.spawn(function()
+        for _ = 1, 4 do
+            if CamNueva and Cam then Cam.CFrame = CamNueva end
+            for _, T in ipairs(Refs) do
+                pcall(function() T.Hit = Mira; T.Target = Alvo end)
+            end
             RunService.Heartbeat:Wait()
         end
-    end
-
-    if not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Grapple Hook")) then
-        warn("[HONEY TP] Grapple: the equip did not register in time")
-        return false
-    end
-
-    local Remote = FindUseItemRemote()
-    if not Remote then
-        if not _GrappleWarned then
-            _GrappleWarned = true
-            warn("[HONEY TP] Grapple: could not resolve the UseItem remote (Net folder still loading?)")
+        if CamNueva and Cam and CamAntes then Cam.CFrame = CamAntes end
+        for I, T in ipairs(Refs) do
+            local A = Antes[I]
+            pcall(function() T.Hit = A[1]; T.Target = A[2] end)
         end
-        return false
+    end)
+
+    return OK
+end
+
+--- Elige el punto y dispara (= SXEFireGrapple2).
+---
+--- `Value` es a donde queremos ir (la jarra). Con `Exacto`, se usa ese punto
+--- tal cual, sin buscar ni achatar -- el hub lo agrego porque el modo de
+--- busqueda achata la direccion al plano XZ, y con un objetivo casi debajo de
+--- los pies la horizontal da ~cero y termina mirando al frente.
+---
+--- Sin `Exacto` entra el modo de BUSQUEDA: agarra la direccion horizontal hasta
+--- el objetivo y busca piso; o sea, te tira EN DIRECCION a la jarra, rasante.
+--- Eso es lo que queremos casi siempre, porque la jarra suele estar mucho mas
+--- lejos que los 50 studs que el gancho alcanza.
+function Grapple.Fire(Value, Exacto)
+    local Char = LocalPlayer.Character
+    local HRP = Char and Char:FindFirstChild("HumanoidRootPart")
+    if not HRP then return false end
+
+    -- Mismo guardia que el hub: durante un robo no se dispara.
+    if LocalPlayer:GetAttribute("Stealing") then return false end
+
+    -- El equip va ACA, antes de todo: mas adelante, entre escribir la mira y
+    -- llamar a Activate(), no puede haber un solo yield.
+    local Tool = Char:FindFirstChild("Grapple Hook")
+    if not Tool then
+        local Backpack = FindTool("Grapple Hook")
+        local Humanoid = Char:FindFirstChildOfClass("Humanoid")
+        if not Backpack or not Humanoid then
+            if not Grapple.__warned then
+                Grapple.__warned = true
+                warn("[HONEY TP] Grapple: no 'Grapple Hook' in character or backpack")
+            end
+            return false
+        end
+        pcall(function() Humanoid:EquipTool(Backpack) end)
+        local T0 = os.clock()
+        repeat
+            RunService.Heartbeat:Wait()
+            Char = LocalPlayer.Character
+            Tool = Char and Char:FindFirstChild("Grapple Hook")
+        until Tool or os.clock() - T0 > 0.5
+        if not Tool then return false end
+        HRP = Char:FindFirstChild("HumanoidRootPart")
+        if not HRP then return false end
     end
 
-    local FireOK, FireErr = pcall(function() CleanFire(Remote, GRAPPLE_VALUE) end)
-    if not FireOK then
-        warn("[HONEY TP] Grapple: fire failed -- " .. tostring(FireErr))
-        return false
+    local Par = RaycastParams.new()
+    Par.FilterType = Enum.RaycastFilterType.Exclude
+    Par.FilterDescendantsInstances = { Char }
+
+    -- ── mira exacta ──────────────────────────────────────────────────────
+    if Exacto and typeof(Value) == "Vector3" then
+        local M = (Value - HRP.Position).Magnitude
+        if M < GRAPPLE_MIN or M > GRAPPLE_MAX then return false end
+
+        local Alvo
+        local Hit = Workspace:Raycast(HRP.Position, Value - HRP.Position, Par)
+        if Hit then Alvo = Hit.Instance end
+        if not Alvo then
+            for _, P in ipairs(Workspace:GetPartBoundsInRadius(Value, 6)) do
+                if P:IsA("BasePart") and not P:IsDescendantOf(Char) then Alvo = P; break end
+            end
+        end
+        if not Alvo then return false end
+        return Grapple.Shoot(Tool, Value, Alvo)
     end
-    LastGrappleFire = os.clock()
-    return true
+
+    -- ── modo busqueda: piso en direccion al objetivo ─────────────────────
+    local Destino
+    if typeof(Value) == "Vector3" then Destino = Value
+    elseif typeof(Value) == "Instance" and Value:IsA("BasePart") then Destino = Value.Position end
+
+    local Dir
+    if Destino then
+        Dir = Destino - HRP.Position
+        Dir = Vector3.new(Dir.X, 0, Dir.Z)
+    end
+    if not Dir or Dir.Magnitude < 1 then
+        local LV = HRP.CFrame.LookVector
+        Dir = Vector3.new(LV.X, 0, LV.Z)
+    end
+    if Dir.Magnitude < 0.01 then return false end
+    Dir = Dir.Unit
+
+    -- El rayo arranca 3 studs sobre la cabeza y baja 60, no 30 studs POR
+    -- ENCIMA: adentro de una base eso ponia el origen arriba del techo y el
+    -- rayo pegaba en el tejado -- era el "gancho al techo de mi base".
+    local Pos, Alvo, MejorM
+    for _, D in ipairs(GRAPPLE_STEPS) do
+        local Origen = HRP.Position + Dir * D + Vector3.new(0, 3, 0)
+        local Hit = Workspace:Raycast(Origen, Vector3.new(0, -60, 0), Par)
+        if Hit then
+            local M = (Hit.Position - HRP.Position).Magnitude
+            if M >= GRAPPLE_MIN and M <= GRAPPLE_MAX and (not MejorM or M < MejorM) then
+                Pos, Alvo, MejorM = Hit.Position, Hit.Instance, M
+            end
+        end
+    end
+
+    if not Pos then
+        for _, D in ipairs(GRAPPLE_STRAIGHT) do
+            local Hit = Workspace:Raycast(HRP.Position, Dir * D, Par)
+            if Hit then
+                local M = (Hit.Position - HRP.Position).Magnitude
+                if M >= GRAPPLE_MIN and M <= GRAPPLE_MAX and (not MejorM or M < MejorM) then
+                    Pos, Alvo, MejorM = Hit.Position, Hit.Instance, M
+                end
+            end
+        end
+    end
+    if not Pos or not Alvo then return false end
+
+    return Grapple.Shoot(Tool, Pos, Alvo)
+end
+
+--- Lo que llama el resto del collector. `Target` es la jarra a la que vamos:
+--- si ya esta dentro del alcance del gancho se apunta exacto, y si no, se tira
+--- en su direccion.
+local function FireGrapple(Target)
+    local HRP = GetRoot()
+    if not HRP then return false end
+
+    local Exacto = false
+    if typeof(Target) == "Vector3" then
+        local M = (Target - HRP.Position).Magnitude
+        Exacto = M >= GRAPPLE_MIN and M <= GRAPPLE_MAX
+    end
+
+    local OK = Grapple.Fire(Target, Exacto)
+    if OK then LastGrappleFire = os.clock() end
+    return OK
 end
 
 -- Equipar la carpet tras el tiron. El gancho ya se disparo antes en
@@ -601,9 +698,10 @@ local function CarpetEngage()
     local Humanoid = Char and Char:FindFirstChildOfClass("Humanoid")
     if not Char or not Humanoid then return nil end
 
-    -- El spawn en MoveToPosition ya disparo el gancho; aqui solo esperamos el
-    -- tiempo de vuelo del proyectil antes de soltar herramientas.
-    task.wait(0.22)
+    -- MoveToPosition ya disparo el gancho y ya espero GRAPPLE_TO_TP, que es lo
+    -- que el handler diferido del item necesita para arrancar. Lo de aca es el
+    -- resto del tiempo de vuelo del proyectil antes de soltar herramientas.
+    task.wait(0.10)
 
     local Hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
     if Hum then pcall(function() Hum:UnequipTools() end) end
@@ -1083,10 +1181,14 @@ local function MoveToPosition(Target)
     end
 
     if Method == "Grapple" then
-        -- Dispara el gancho INMEDIATAMENTE al resolver el objetivo (espejo exacto
-        -- de sab_com.lua línea 12058): el tiron del servidor arranca mientras el
-        -- resto del engage se prepara.
-        task.spawn(function() pcall(FireGrapple) end)
+        -- SECUENCIAL, no en paralelo -- es el orden del hub (SXECicloTP) y es
+        -- obligatorio. Antes esto era un task.spawn y el engage corria al mismo
+        -- tiempo: a los 0.22s hacia UnequipTools(), que le sacaba la Grapple
+        -- Hook de la mano ANTES de que el handler diferido del item llegara a
+        -- correr. El item testea Tool.Name == "Grapple Hook", no la encontraba,
+        -- y se iba sin disparar.
+        pcall(FireGrapple, Target)
+        task.wait(GRAPPLE_TO_TP)
         -- El engage solo hace falta una vez por vuelo: si ya venis en la carpet,
         -- repetirlo te tira al piso entre jar y jar.
         if not OnCarpet() then CarpetEngage() end

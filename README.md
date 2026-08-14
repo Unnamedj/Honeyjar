@@ -253,11 +253,46 @@ porque el server no se entera. Son las huellas que el propio evento deja:
 Sin ninguna señal se asume apagado, que es el lado seguro: esperar de más
 cuesta menos que hopear en vacío.
 
-> El resolvedor del remote `UseItem` (el gancho) siguió el mismo camino: se le
-> sacó el `require` del paquete `Net`, que además se **reintentaba cada 3
-> segundos** desde cada engage. Queda la huella dual-hash — el hash que existe
-> como `RE` y `RF` a la vez solo puede ser `UseItem` — que es estructural y ya
-> era la vía preferida.
+### El gancho
+
+Durante mucho tiempo **no hizo nada**. Se disparaba el remote `UseItem` con un
+escalar suelto (`FireServer(0.33)`), siguiendo un comentario de `sab_com.lua`
+que decía que esa era la firma. El hub nuevo documenta que no lo es:
+
+> *"O hub mandava so o primeiro — um 0.33 solto, sem posicao e sem peca alvo —
+> e o servidor nao tinha como saber pra onde puxar. **Dai o silencio.**"*
+
+Mandar los tres argumentos reales (`Magnitude/120, Hit.Position, alvo`, que es
+lo que hacen los ítems hermanos que sí están en texto claro) tampoco alcanza: el
+`HookScript` de la Grapple está ofuscado con Luraph y su firma no coincide.
+
+Lo que funciona — y es lo que hay ahora, portado del hub — es **no tocar el
+remote** y hacer que el script del juego arme la llamada solo:
+
+1. se elige un punto del piso **en dirección** a la jarra, entre 10 y 50 studs
+   (la franja que el ítem acepta). Se prueban 15 distancias y gana la **más
+   cercana** válida; el rayo baja desde 3 studs sobre la cabeza, no desde 30
+   —desde arriba pegaba en el techo de la propia base;
+2. se le escribe `Hit`/`Target` al `PlayerMouse` — a **todas** las tablas con
+   esa forma, porque el `require` del ejecutor devuelve una distinta de la que
+   lee el `HookScript` (nosotros pedimos primero la del juego con `Env.Require`,
+   así la correcta está garantizada, y el barrido del heap queda de respaldo);
+3. se **gira la cámara** para que el rayo del cursor apunte a ese punto: el
+   `HookScript` arma su rayo con `GetMouseLocation()` + cámara. Se restaura a
+   los 4 frames;
+4. se llama `tool:Activate()` **en el mismo frame**, sin un solo yield en el
+   medio — el módulo recalcula la mira en cada `PreRender` y pisaría lo escrito.
+
+Y el timing importa: entre el gancho y el vuelo hay **0.12 s** obligatorios.
+`Activate()` solo *encola* el handler (`SignalBehavior = Deferred`), así que en
+el frame del disparo el script del ítem todavía ni corrió. Si el vuelo arranca
+antes, lo primero que hace es equipar la carpet — que **saca la Grapple Hook de
+la mano** —, y cuando el handler por fin corre no encuentra la tool y se va sin
+disparar. Por eso el disparo y el engage son secuenciales y no en paralelo.
+
+Como ya no se dispara ningún remote, se fue con esto el resolvedor `UseItem`
+entero (dual-hash y posicional), y con él las últimas lecturas de la carpeta
+`Net`.
 
 Cada beat lleva el estado al panel, así que la tarjeta de la cuenta dice
 *Waiting for event* en vez de un *Idle* que parecería un bot roto — y el KPI de
